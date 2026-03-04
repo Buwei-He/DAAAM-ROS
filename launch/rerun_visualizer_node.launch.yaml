@@ -1,0 +1,76 @@
+---
+launch:
+  # topic arguments
+  - arg: {name: depth_info_topic, default: '/tesse/depth_cam/camera_info'}
+  - arg: {name: depth_image_topic, default: '/tesse/depth_cam/mono/image_raw'}
+  - arg: {name: rgb_info_topic, default: '/tesse/left_cam/camera_info'}
+  - arg: {name: rgb_image_topic, default: '/tesse/left_cam/rgb/image_raw'}
+  - arg: {name: semantic_color_topic, default: '/tesse/left_cam/semantic/image_raw'}
+  - arg: {name: odom_topic, default: '/tesse/odom'}
+  - arg: {name: dsg_topic, default: '/hydra/backend/dsg'}
+  - arg: {name: semantic_updates_topic, default: '/daaam/semantic_updates'}
+  - arg: {name: dsg_update_rate, default: '0.1'}
+  # other parameters
+  - arg: {name: depth_scale, default: '1000.0'}
+  - arg: {name: log_depth, default: 'false'}
+  - arg: {name: log_object_meshes, default: 'false'}
+  - arg: {name: labelspace_colors, default: $(find-pkg-share daaam_ros)/config/labels_pseudo.csv}
+  # tf2 frame parameters
+  - arg: {name: use_tf2, default: 'true'}
+  - arg: {name: world_frame, default: 'map'}
+  - arg: {name: camera_frame, default: 'camera_link'}
+  # temporal visualization parameters
+  - arg: {name: enable_temporal_viz, default: 'true'}
+  - arg: {name: enable_retroactive_logging, default: 'true'}
+  - arg: {name: temporal_pulse_duration_ms, default: '500'}
+  - arg: {name: track_buffer, default: '30'}
+  - arg: {name: show_temporal_labels, default: 'true'}
+  - arg: {name: show_observation_pulses, default: 'true'}
+  - arg: {name: track_buffer_opacity_min, default: '0.3'}
+  - arg: {name: track_buffer_opacity_max, default: '1.0'}
+
+  # node definition
+  - node:
+      pkg: daaam_ros
+      exec: rerun_visualizer_node.py
+      name: rerun_visualizer
+      output: screen
+      param:
+        - {name: depth_info_topic, value: $(var depth_info_topic)}
+        - {name: depth_image_topic, value: $(var depth_image_topic)}
+        - {name: rgb_info_topic, value: $(var rgb_info_topic)}
+        - {name: rgb_image_topic, value: $(var rgb_image_topic)}
+        - {name: semantic_info_topic, value: $(var rgb_info_topic)}
+        - {name: semantic_color_topic, value: $(var semantic_color_topic)}
+        - {name: odom_topic, value: $(var odom_topic)}
+        - {name: dsg_topic, value: $(var dsg_topic)}
+        - {name: semantic_updates_topic, value: $(var semantic_updates_topic)}
+        - {name: dsg_update_rate, value: $(var dsg_update_rate)}
+        - {name: depth_scale, value: $(var depth_scale)}
+        - {name: log_depth, value: $(var log_depth)}
+        - {name: log_object_meshes, value: $(var log_object_meshes)}
+        - {name: world_frame, value: $(var world_frame)}
+        - {name: camera_frame, value: $(var camera_frame)}
+        - {name: use_tf2, value: $(var use_tf2)}
+        - {name: labelspace_colors, value: $(var labelspace_colors)}
+        - {name: enable_temporal_viz, value: $(var enable_temporal_viz)}
+        - {name: enable_retroactive_logging, value: $(var enable_retroactive_logging)}
+        - {name: temporal_pulse_duration_ms, value: $(var temporal_pulse_duration_ms)}
+        - {name: track_buffer, value: $(var track_buffer)}
+        - {name: show_temporal_labels, value: $(var show_temporal_labels)}
+        - {name: show_observation_pulses, value: $(var show_observation_pulses)}
+        - {name: track_buffer_opacity_min, value: $(var track_buffer_opacity_min)}
+        - {name: track_buffer_opacity_max, value: $(var track_buffer_opacity_max)}
+      remap:
+        # Although the node subscribes directly to the full topic names from params,
+        # adding remaps allows overriding them externally in a standard way.
+        # We base the 'from' on the parameter name for clarity.
+        - {from: '~/depth_info', to: $(var depth_info_topic)}
+        - {from: '~/depth_image', to: $(var depth_image_topic)}
+        - {from: '~/rgb_info', to: $(var rgb_info_topic)}
+        - {from: '~/rgb_image', to: $(var rgb_image_topic)}
+        - {from: '~/semantic_info', to: $(var semantic_info_topic)}
+        - {from: '~/semantic_color', to: $(var semantic_color_topic)}
+        - {from: '~/odom', to: $(var odom_topic)}
+        - {from: '~/dsg', to: $(var dsg_topic)}
+        - {from: '~/semantic_updates', to: $(var semantic_updates_topic)}

@@ -1,0 +1,58 @@
+# Configuration file for ROS2 Dataloader Node
+# This file defines default parameters that can be overridden via ROS2 parameters
+
+# Dataset configuration
+dataset_type: "coda"  # Options: coda, generic (future: hm3d, replica, etc.)
+dataset_path: "/path/to/coda/data/dir/"
+sequence: "0"  # Sequence/scene to load
+camera_ids: ["cam0", "cam1"]  # List of cameras to process
+
+# Frame selection
+start_frame: 0  # First frame to load
+end_frame: null  # Last frame (null for all frames)
+stride: 1  # Process every Nth frame
+
+# Depth configuration
+depth_method: "sgbm"  # Options: provided, sgbm, none
+depth_source: "none"  # Options: 3d_raw, 3d_raw_estimated, none (only used when depth_method=provided)
+depth_params:
+  # SGBM parameters (OpenCV)
+  min_disparity: 0
+  num_disparities: 128  # Must be divisible by 16
+  block_size: 11  # Odd number, typically 3-11
+  p1: 968  # 8 * 3 * block_size^2
+  p2: 3872  # 32 * 3 * block_size^2
+  disp12_max_diff: 1
+  prefilter_cap: 63
+  uniqueness_ratio: 10
+  speckle_window_size: 100
+  speckle_range: 32
+  mode: 3  # cv2.STEREO_SGBM_MODE_SGBM_3WAY
+  
+  # Optional: WLS filter for disparity refinement
+  use_wls_filter: false
+  wls_lambda: 8000
+  wls_sigma: 1.5
+
+# Output configuration
+output_mode: "ros_topics"  # Options: ros_topics, rosbag
+output_params:
+  # ROS topic publishing
+  queue_size: 10
+  latch: false
+  publish_tf: true
+  
+  # Bag writing
+  bag_path: "/tmp/dataloader_output.bag"
+  add_timestamp: true  # Add timestamp to bag filename
+  storage_id: "sqlite3"
+  compression_mode: "none"  # Options: none, file, message
+  compression_format: ""  # e.g., zstd
+
+# Timing configuration
+use_timestamps: true  # Use dataset timestamps if available
+target_framerate: 10.0  # Target publishing rate in Hz
+
+# Processing configuration
+num_workers: 2  # Number of worker threads for data loading
+prefetch_frames: 10  # Number of frames to prefetch in queue

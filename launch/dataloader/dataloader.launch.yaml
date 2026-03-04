@@ -1,0 +1,92 @@
+# ROS2 launch file for the Bag Writer Node
+# Usage: ros2 launch daaam_ros dataloader.launch.yaml
+
+launch:
+  # Configuration arguments that can be overridden
+  - arg:
+      name: 'config_file'
+      default: '$(find-pkg-share daaam_ros)/config/dataloader_config.yaml'
+      description: 'Path to configuration file'
+  
+  - arg:
+      name: 'dataset_type'
+      default: 'coda'
+      description: 'Type of dataset (coda, generic, etc.)'
+  
+  - arg:
+      name: 'dataset_path'
+      default: '/path/to/coda/data/dir/'
+      description: 'Path to dataset root directory'
+  
+  - arg:
+      name: 'sequence'
+      default: '0'
+      description: 'Sequence/scene ID to load'
+  
+  - arg:
+      name: 'target_framerate'
+      default: '1000.0'
+      description: 'Writing speed in Hz (set high for max speed)'
+  
+  - arg:
+      name: 'depth_method'
+      default: 'sgbm'
+      description: 'Depth estimation method (provided, sgbm, none)'
+  
+  - arg:
+      name: 'depth_source'
+      default: 'none'
+      description: 'Depth source for provided method (3d_raw, 3d_raw_estimated, none)'
+  
+  - arg:
+      name: 'auto_start'
+      default: 'true'
+      description: 'Auto-start processing on node launch'
+  
+  - arg:
+      name: 'enable_visualizer'
+      default: 'false'
+      description: 'Enable Rerun visualization'
+  
+  - arg:
+      name: 'namespace'
+      default: 'dataloader'
+      description: 'Node namespace'
+
+  # Bag writer node
+  - node:
+      pkg: 'daaam_ros'
+      exec: 'dataloader_node.py'
+      name: 'bag_writer_node'
+      namespace: $(var namespace)
+      output: 'screen'
+      
+      # Parameters
+      parameters:
+        - config_file: $(var config_file)
+        - dataset_type: $(var dataset_type)
+        - dataset_path: $(var dataset_path)
+        - sequence: $(var sequence)
+        - target_framerate: $(var target_framerate)
+        - depth_method: $(var depth_method)
+        - depth_source: $(var depth_source)
+        - auto_start: $(var auto_start)
+        - enable_visualizer: $(var enable_visualizer)
+      
+      # Topic remappings
+      remappings:
+        # RGB images
+        - ['~/cam0/rgb_image', '/camera/left/image_raw']
+        - ['~/cam1/rgb_image', '/camera/right/image_raw']
+        
+        # Depth images
+        - ['~/cam0/depth_image', '/camera/left/depth']
+        - ['~/cam1/depth_image', '/camera/right/depth']
+        
+        # Camera info
+        - ['~/cam0/camera_info', '/camera/left/camera_info']
+        - ['~/cam1/camera_info', '/camera/right/camera_info']
+        
+        # Label images (if available)
+        - ['~/cam0/label_image', '/camera/left/labels']
+        - ['~/cam1/label_image', '/camera/right/labels']

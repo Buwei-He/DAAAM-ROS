@@ -1,0 +1,166 @@
+---
+launch:
+  # development arguments
+  - arg: {name: debug, default: 'false'}
+  - arg: {name: verbosity, default: '0'}
+  - arg: {name: glog_level, default: '0'}
+  - arg: {name: print_missing, default: 'false', description: have config utilities print all missing parameters when parsing configs}
+
+  # run behavior
+  - arg: {name: scene, default: clio_apartment, description: scene name}
+  - arg: {name: log_path, default: '', description: directory to output to}
+  - arg: {name: exit_after_clock, default: 'false', description: shutdown hydra node after a rosbag finishes playing}
+
+  # ROS2 node parameters
+  - arg: {name: depth_scale, default: '1000.0', description: depth image scale factor (e.g. 1000 for mm to m)}
+  - arg: {name: sync_tolerance, default: '0.066'}
+  - arg: {name: defer_dsg_processing, default: 'false', description: Defer DSG processing until shutdown for performance}
+
+
+  # robot configuration
+  - arg: {name: robot_id, default: '0', description: unique robot identifier}
+  - arg: {name: sensor_frame, default: cam, description: camera frame}
+  - arg: {name: robot_frame, default: dominic/forward_link, description: robot body tf frame}
+  - arg: {name: odom_frame, default: world, description: odometry (map) frame}
+  - arg: {name: map_frame, default: map, description: backend scene graph frame}
+
+  # configuration
+  - arg: {name: hydra_config_path, default: $(find-pkg-share daaam_ros)/config/hydra_config/clio_dataset_khronos.yaml}
+  - arg: {name: input_config_path, default: $(find-pkg-share daaam_ros)/config/hydra_ros_config/clio_dataset_input_config.yaml}
+  - arg: {name: lcd_config_path, default: $(find-pkg-share hydra)/config/lcd/uhumans2.yaml}
+  - arg: {name: enable_lcd, default: 'false'}
+  - arg: {name: bounding_box_type, default: OBB}
+
+  # topics:
+  - arg: {name: rgb_topic, default: /dominic/forward/color/image_raw}
+  - arg: {name: rgb_info_topic, default: /dominic/forward/camera_info}
+  - arg: {name: depth_topic, default: /dominic/forward/depth/image_rect_raw}
+  - arg: {name: label_topic, default: /segmentation/image_raw}
+  - arg: {name: colored_label_topic, default: /segmentation/color/image_raw}
+  - arg: {name: odom_topic, default: /dominic/forward/colmap_odom}
+
+  # dataset semantics
+  - arg: {name: labelspace_path, default: $(find-pkg-share daaam_ros)/config/labels_pseudo.yaml}
+  - arg: {name: labelspace_colors, default: $(find-pkg-share daaam_ros)/config/labels_pseudo.csv} 
+  # - arg: {name: labelspace_path, default: $(find-pkg-share hydra)/config/label_spaces/uhumans2_$(var scene)_label_space.yaml}
+  # - arg: {name: semantic_label_remap_path, default: $(find-pkg-share hydra)/config/label_remaps/uhumans2_$(var scene).yaml}
+  # output
+  - arg: {name: enable_zmq, default: 'false'}
+  - arg: {name: zmq_url, default: 'tcp://127.0.0.1:8001'}
+  - arg: {name: zmq_send_mesh, default: 'false'}
+
+  - set_remap: {from: hydra_visualizer/dsg, to: hydra/backend/dsg}
+  - node: {pkg: tf2_ros, exec: static_transform_publisher, args: '--frame-id world --child-frame-id map'}
+  - node: {pkg: tf2_ros, exec: static_transform_publisher, args: '--frame-id cam --child-frame-id $(var robot_frame)'}
+
+  - include:
+      file: $(find-pkg-share daaam_ros)/launch/daaam_node.launch.yaml
+      arg:
+        # Topic configuration
+        - {name: rgb_topic, value: $(var rgb_topic)}
+        - {name: depth_topic, value: $(var depth_topic)}
+        - {name: camera_info_topic, value: $(var rgb_info_topic)}
+        - {name: dsg_update_topic, value: '/hydra/backend/dsg'}
+        - {name: segmentation_topic, value: $(var label_topic)}
+        - {name: segmentation_color_topic, value: $(var colored_label_topic)}
+
+        # ROS node parameters
+        - {name: depth_scale, value: $(var depth_scale)}
+
+        # Configuration files
+        - {name: semantic_config, value: $(var labelspace_path)}
+        - {name: labelspace_colors, value: $(var labelspace_colors)}
+
+        # Model configuration optimized for Clio Apartment
+        - {name: sam_model, value: 'fastsam/FastSAM-x.pt'}
+        - {name: sam_model_config_path, value: 'fastsam/fastsam_config.yaml'}
+        - {name: sentence_embedding_model, value: "sentence-transformers/sentence-t5-large"} # Qwen/Qwen3-Embedding-4B
+        - {name: compute_full_image_description, value: 'true'}
+
+        # Processing parameters optimized for Clio Apartment
+        - {name: depth_lb, value: '0.05'}
+        - {name: depth_ub, value: '2.0'}
+        - {name: query_interval_frames, value: '60'} # default: 90
+        - {name: num_assignment_workers, value: '2'}
+        - {name: num_grounding_workers, value: '1'}
+        - {name: min_mask_region_area, value: '300'} 
+
+        # Worker configuration
+        - {name: assignment_worker, value: 'min_frames'}
+        - {name: grounding_worker, value: 'dam_multi_image'}
+        - {name: min_obs_per_track, value: '8'} # default: 6
+        - {name: multi_image_min_n_masks, value: '32'}
+        - {name: save_debug_data, value: 'false'}
+        - {name: save_grounding_images, value: 'true'}
+        - {name: save_plain_grounding_images, value: 'false'}
+
+        - {name: dataset_name, value: 'clio'}
+
+        # Tracking
+        - {name: reid_weights, value: 'checkpoints/reid_weights/clip_general.engine'}
+        - {name: with_reid, value: 'true'}
+        - {name: reid_half, value: 'false'}  # CLIP models require FP32
+
+        # Output
+        - {name: enable_debug_output, value: 'true'}
+        - {name: output_dir, value: 'output/clio'}
+        - {name: defer_dsg_processing, value: $(var defer_dsg_processing)}
+        
+  # Hydra node
+  - node:
+      pkg: hydra_ros
+      exec: hydra_ros_node
+      name: hydra
+      on_exit: shutdown
+      launch-prefix: $(if $(var debug) 'gdbserver localhost:3000')
+      env:
+        - {name: TERM, value: xterm-256color}
+      remap:
+        - {from: hydra/input/left_cam/depth_registered/image_rect, to: $(var depth_topic)}
+        - {from: hydra/input/left_cam/rgb/image_raw, to: $(var rgb_topic)}
+        - {from: hydra/input/left_cam/rgb/camera_info, to: $(var rgb_info_topic)}
+        - {from: hydra/input/left_cam/semantic/image_raw, to: $(var label_topic)}
+      args: >
+        # start subst_value files
+        --config-utilities-file $(var input_config_path)
+        # end subst value files
+        --config-utilities-file $(var hydra_config_path)
+        --config-utilities-file $(var labelspace_path)
+        --config-utilities-file $(var lcd_config_path)
+        --config-utilities-file $(find-pkg-share hydra_ros)/config/sinks/mesh_segmenter_sinks.yaml@frontend/objects
+        --config-utilities-file $(find-pkg-share hydra_ros)/config/sinks/gvd_places_sinks.yaml@frontend/freespace_places
+        --config-utilities-file $(find-pkg-share hydra_ros)/config/sinks/active_window_sinks.yaml@active_window
+        --config-utilities-yaml {exit_after_clock: $(var exit_after_clock), log_path: $(var log_path)}
+        --config-utilities-yaml {print_missing: $(var print_missing), glog_level: $(var glog_level), verbosity: $(var verbosity)}
+        --config-utilities-yaml {robot_id: $(var robot_id), odom_frame: $(var odom_frame), robot_frame: $(var robot_frame), map_frame: $(var map_frame)}
+
+        --config-utilities-yaml {enable_zmq: $(var enable_zmq), backend: {zmq_sink: {url: $(var zmq_url), send_mesh: $(var zmq_send_mesh)}}}
+        --config-utilities-yaml {frontend: {objects: {bounding_box_type: $(var bounding_box_type)}}}
+        --config-utilities-yaml {enable_lcd: $(var enable_lcd)}
+
+  # Hydra visualizer
+  - include:
+      file: $(find-pkg-share hydra_visualizer)/launch/streaming_visualizer.launch.yaml
+      arg:
+        - {name: visualizer_frame, value: $(var map_frame)}
+
+  # Rerun visualizer
+  - include:
+      file: $(find-pkg-share daaam_ros)/launch/rerun_visualizer_node.launch.yaml
+      arg:
+        - {name: depth_info_topic, value: $(var rgb_info_topic)}
+        - {name: depth_image_topic, value: $(var depth_topic)}
+        - {name: rgb_info_topic, value: $(var rgb_info_topic)}
+        - {name: rgb_image_topic, value: $(var rgb_topic)}
+        - {name: semantic_color_topic, value: $(var colored_label_topic)}
+        - {name: semantic_info_topic, value: $(var rgb_info_topic)}
+        - {name: odom_topic, value: $(var odom_topic)}
+        - {name: dsg_topic, value: /hydra/backend/dsg}
+        - {name: semantic_updates_topic, value: /daaam/semantic_updates}
+        - {name: dsg_update_rate, value: '0.1'}
+        - {name: depth_scale, value: $(var depth_scale)}
+        - {name: use_tf2, value: 'true'}
+        - {name: world_frame, value: $(var map_frame)}
+        - {name: camera_frame, value: $(var robot_frame)}
+        - {name: labelspace_colors, value: $(var labelspace_colors)}
+        - {name: log_object_meshes, value: 'false'}

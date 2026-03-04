@@ -1,0 +1,49 @@
+daaam_labels:
+  feature_type: BOTH # CLIP, SENTENCE, BOTH
+  distance_metric:
+    type: cosine # cosine, l1, l2, lerf
+
+# Strategy for comparing merged nodes with multiple semantic labels
+# - SINGLE_MAX: Use max-weight label only (default, backward compatible)
+# - WEIGHTED_AVERAGE: Compute weighted average of all label features (smooth boundaries)
+# - MULTI_LABEL_MAX: Compare all label pairs, use max similarity (preserve distinctions)
+merge_label_strategy: SINGLE_MAX # USED TO BE SINGLE_MAX
+
+# Strategy for aggregating neighbor similarities into node distance
+# - MAX: Include if ANY neighbor is similar (current default, most lenient)
+# - MIN: Include only if ALL neighbors are similar (aggressive splitting)
+# - AVERAGE: Include if average neighbor is similar (balanced)
+# - MEDIAN: Include if median neighbor is similar (robust to outliers)
+# - SELF_CONSISTENCY: Use semantic homogeneity of node's own labels (splits mixed nodes)
+node_distance_aggregation: MAX # USED TO BE MAX
+
+room_finder:
+  min_dilation_m: -1.0 # Negative = auto-compute from mean edge score
+  max_dilation_m: 1.0
+  min_component_size: 25 # 25 outdoor
+  min_room_size: 30 # 30 outdoors
+  dilation_threshold_mode: PLATEAU
+  min_lifetime_length_m: 0.1
+  plateau_ratio: 0.15
+  clustering_mode: NEIGHBORS
+  dilation_diff_threshold_m: -1.0
+backend:
+  enable_node_merging: true
+  update_functors:
+    agents:
+      type: UpdateAgentsFunctor
+    objects:
+      type: UpdateObjectsFunctor
+      daaam_object_embedding_merge_threshold: 0.6 # [DAAAM LABELS]
+      merge_proposer:
+        strategy: NearestNode
+    traversability:
+      type: UpdateTraversabilityFunctor
+      min_place_size: 0.4 # m
+      max_place_size: 2.0 # m
+      use_metric_distance: false
+      tolerance: 0.1 # m
+    buildings:
+      type: UpdateBuildingsFunctor
+    zmq_labels:
+      type: ZmqRoomLabelUpdater

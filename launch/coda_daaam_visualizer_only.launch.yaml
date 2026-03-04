@@ -1,0 +1,56 @@
+---
+launch:
+  # set use_sim_time globally for all nodes
+  - set_parameter: {name: use_sim_time, value: 'true'}
+
+  # robot configuration
+  - arg: {name: robot_id, default: '0', description: unique robot identifier}
+  - arg: {name: sensor_frame, default: cam0_optical_frame, description: lidar frame (CODa poses are in os1 frame)}
+  - arg: {name: robot_frame, default: os1, description: robot body tf frame (os1 for CODa)}
+  - arg: {name: odom_frame, default: world, description: odometry (map) frame}
+
+  # ROS2 node parameters
+  - arg: {name: depth_scale, default: '1000.0', description: depth image scale factor (e.g. 1000 for mm to m)}
+  - arg: {name: sync_tolerance, default: '0.066'}
+
+  # topics from CODa bag
+  - arg: {name: rgb_topic, default: /cam0/rgb_image}
+  - arg: {name: rgb_info_topic, default: /cam0/camera_info}
+  - arg: {name: depth_topic, default: /cam0/depth_image}
+  - arg: {name: label_topic, default: /segmentation/image_raw}
+  - arg: {name: colored_label_topic, default: /segmentation/color/image_raw}
+  - arg: {name: odom_topic, default: '/none'}  # CODa doesn't have odometry messages, poses are in /tf
+
+  # dataset semantics
+  - arg: {name: labelspace_path, default: $(find-pkg-share daaam_ros)/config/labels_pseudo.yaml}
+  - arg: {name: labelspace_colors, default: $(find-pkg-share daaam_ros)/config/labels_pseudo.csv} 
+  
+  - set_remap: {from: hydra_visualizer/dsg, to: hydra/backend/dsg}
+
+  # Hydra visualizer
+  - include:
+      file: $(find-pkg-share hydra_visualizer)/launch/streaming_visualizer.launch.yaml
+      arg:
+        - {name: visualizer_frame, value: $(var odom_frame)}
+        - {name: rviz_path, value: "$(find-pkg-share daaam_ros)/config/rviz/coda.rviz"}
+
+  # Rerun visualizer
+  - include:
+      file: $(find-pkg-share daaam_ros)/launch/rerun_visualizer_node.launch.yaml
+      arg:
+        - {name: depth_info_topic, value: $(var rgb_info_topic)}
+        - {name: depth_image_topic, value: $(var depth_topic)}
+        - {name: rgb_info_topic, value: $(var rgb_info_topic)}
+        - {name: rgb_image_topic, value: $(var rgb_topic)}
+        - {name: semantic_color_topic, value: $(var colored_label_topic)}
+        - {name: semantic_info_topic, value: $(var rgb_info_topic)}
+        - {name: odom_topic, value: $(var odom_topic)}
+        - {name: dsg_topic, value: /hydra/backend/dsg}
+        - {name: semantic_updates_topic, value: /daaam/semantic_updates}
+        - {name: dsg_update_rate, value: '0.1'}
+        - {name: depth_scale, value: $(var depth_scale)}
+        - {name: use_tf2, value: 'true'}
+        - {name: world_frame, value: $(var odom_frame)}  # Use 'world' frame to match pose transforms
+        - {name: camera_frame, value: $(var sensor_frame)}
+        - {name: labelspace_colors, value: $(var labelspace_colors)}
+        - {name: log_object_meshes, value: 'false'}

@@ -1,0 +1,129 @@
+---
+launch:
+  # Topic arguments
+  - arg: {name: rgb_topic, default: '/tesse/left_cam/rgb/image_raw'}
+  - arg: {name: depth_topic, default: '/tesse/left_cam/depth/image_raw'}
+  - arg: {name: camera_info_topic, default: '/tesse/left_cam/camera_info'}
+  - arg: {name: dsg_update_topic, default: '/hydra/backend/dsg'}
+  - arg: {name: segmentation_topic, default: '/segmentation/image_raw'}
+  - arg: {name: segmentation_color_topic, default: '/segmentation/color/image_raw'}
+
+  # ROS2 node parameters
+  - arg: {name: depth_scale, default: '1.0'}
+  - arg: {name: sync_tolerance, default: '0.033'} # 33ms tolerance for approx 30fps
+  - arg: {name: world_frame, default: 'world'}
+  - arg: {name: camera_frame, default: 'dominic/forward_link'}
+
+  # Configuration file arguments
+  - arg: {name: pipeline_config, default: 'config/pipeline_config.yaml'}
+  - arg: {name: semantic_config, default: $(find-pkg-share daaam_ros)/config/labels_pseudo.yaml}
+  - arg: {name: labelspace_colors, default: $(find-pkg-share daaam_ros)/config/labels_pseudo.csv}
+
+  # Model configuration arguments
+  - arg: {name: agent_model_name, default: 'gpt-4.1'}
+  - arg: {name: sam_model, default: 'fastsam/FastSAM-s.pt'}
+  - arg: {name: sam_model_config_path, default: 'fastsam/fastsam_config.yaml'}
+  - arg: {name: sam_imgsz, default: ''}  # Empty string for auto, or '1024,1248' for TensorRT (height,width)
+  - arg: {name: sentence_embedding_model, default: "sentence-transformers/sentence-t5-large"} # Qwen/Qwen3-Embedding-4B
+  - arg: {name: compute_full_image_description, default: 'true'}
+
+  # Processing parameters
+  - arg: {name: query_interval_frames, default: '60'}
+  - arg: {name: num_assignment_workers, default: '1'}
+  - arg: {name: num_grounding_workers, default: '4'}
+  - arg: {name: assignment_worker, default: 'min_frames_max_size'}
+  - arg: {name: grounding_worker, default: 'dam_multi_image'}
+  - arg: {name: min_mask_region_area, default: '300'}
+  - arg: {name: defer_dsg_processing, default: 'false', description: Defer DSG processing until shutdown for performance}
+
+  # Worker-specific parameters
+  - arg: {name: min_obs_per_track, default: '6'}
+  - arg: {name: save_debug_data, default: 'false'}
+  - arg: {name: multi_image_min_n_masks, default: '-1'}
+  - arg: {name: save_grounding_images, default: 'false'}
+  - arg: {name: save_plain_grounding_images, default: 'false'}
+  - arg: {name: save_object_images, default: 'false'}
+  - arg: {name: selectframe_clip_backend, default: 'openclip'}  # "openclip" or "pe" (Perception Encoder)
+  - arg: {name: selectframe_clip_model_name, default: 'ViT-L-14'}  # Model name for CLIP backend
+  - arg: {name: cuda_device, default: '', description: 'CUDA device for grounding workers (empty=inherit env, "0", "1", etc.)'}
+
+  # Depth filtering arguments
+  - arg: {name: depth_lb, default: '0.25'}
+  - arg: {name: depth_ub, default: '5.0'}
+
+  # Tracking arguments
+  - arg: {name: reid_weights, default: 'checkpoints/reid_weights/clip_general.engine'}
+  - arg: {name: with_reid, default: 'true'}
+
+  # Debug and output arguments
+  - arg: {name: enable_debug_output, default: 'true'}
+  - arg: {name: output_dir, default: 'output'}
+
+  # Node definition
+  - node:
+      pkg: daaam_ros
+      exec: daaam_node.py
+      name: daaam
+      output: screen
+      sigterm_timeout: 60.0 # Grounding worker join (20s) + SIGINT retry (5s) + save + drain
+      sigkill_timeout: 90.0
+      param:
+        # Configuration files
+        - {name: pipeline_config, value: $(var pipeline_config)}
+        - {name: semantic_config, value: $(var semantic_config)}
+        - {name: labelspace_colors, value: $(var labelspace_colors)}
+
+        # ROS2 node parameters
+        - {name: depth_scale, value: $(var depth_scale)}
+        
+        # Model parameters
+        - {name: agent_model_name, value: $(var agent_model_name)}
+        - {name: sam_model, value: $(var sam_model)}
+        - {name: sam_model_config_path, value: $(var sam_model_config_path)}
+        - {name: sam_imgsz, value: $(var sam_imgsz)}
+        - {name: sentence_embedding_model, value: $(var sentence_embedding_model)}
+        - {name: compute_full_image_description, value: $(var compute_full_image_description)}
+
+        # Processing parameters
+        - {name: query_interval_frames, value: $(var query_interval_frames)}
+        - {name: num_assignment_workers, value: $(var num_assignment_workers)}
+        - {name: num_grounding_workers, value: $(var num_grounding_workers)}
+        - {name: assignment_worker, value: $(var assignment_worker)}
+        - {name: grounding_worker, value: $(var grounding_worker)}
+        - {name: min_mask_region_area, value: $(var min_mask_region_area)}
+        - {name: defer_dsg_processing, value: $(var defer_dsg_processing)}
+
+        
+        # Worker-specific parameters
+        - {name: min_obs_per_track, value: $(var min_obs_per_track)}
+        - {name: save_debug_data, value: $(var save_debug_data)}
+        - {name: multi_image_min_n_masks, value: $(var multi_image_min_n_masks)}
+        - {name: save_grounding_images, value: $(var save_grounding_images)}
+        - {name: save_plain_grounding_images, value: $(var save_plain_grounding_images)}
+        - {name: save_object_images, value: $(var save_object_images)}
+        - {name: selectframe_clip_backend, value: $(var selectframe_clip_backend)}
+        - {name: selectframe_clip_model_name, value: $(var selectframe_clip_model_name)}
+        - {name: cuda_device, value: $(var cuda_device)}
+
+        # Depth filtering
+        - {name: depth_lb, value: $(var depth_lb)}
+        - {name: depth_ub, value: $(var depth_ub)}
+
+        # Tracking
+        - {name: reid_weights, value: $(var reid_weights)}
+        - {name: with_reid, value: $(var with_reid)}
+
+        # TF frame configuration
+        - {name: world_frame, value: $(var world_frame)}
+        - {name: camera_frame, value: $(var camera_frame)}
+        
+        # Debug and output
+        - {name: enable_debug_output, value: $(var enable_debug_output)}
+        - {name: output_dir, value: $(var output_dir)}
+      remap:
+        - {from: '~/rgb_image', to: $(var rgb_topic)}
+        - {from: '~/depth_image', to: $(var depth_topic)}
+        - {from: '~/camera_info', to: $(var camera_info_topic)}
+        - {from: '~/dsg_updates', to: $(var dsg_update_topic)}
+        - {from: '~/label_image', to: $(var segmentation_topic)}
+        - {from: '~/colored_label_image', to: $(var segmentation_color_topic)}
