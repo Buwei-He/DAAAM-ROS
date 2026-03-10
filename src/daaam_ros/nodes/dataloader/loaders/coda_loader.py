@@ -263,6 +263,7 @@ class CodaDataLoader(DataLoader):
 		depth_source = getattr(self.config, 'depth_source', 'none')
 		
 		if depth_source == '3d_raw':
+			raise(ValueError("Raw depth from cam3 is in a different reference frame. We recommend running stereo depth on the frames of cam0/cam1 instead, which are rectified and in the same frame as the RGB images."))	
 			# Raw depth from cam3 (depth camera)
 			depth_base = self.root_path / "3d_raw" / "cam3" / self.sequence
 			if depth_base.exists():
