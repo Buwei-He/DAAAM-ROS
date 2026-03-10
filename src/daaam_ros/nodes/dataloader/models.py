@@ -154,7 +154,7 @@ class DataloaderConfig(BaseModel):
 	
 	# Depth configuration
 	depth_method: str = Field(default="provided", description="Depth method: provided, sgbm, raft, none")
-	depth_source: str = Field(default="none", description="Depth source for provided method: 3d_raw, 3d_raw_estimated, none")
+	depth_source: str = Field(default="none", description="Depth source for provided method: 3d_raw_estimated, none")
 	depth_params: Dict[str, Any] = Field(default_factory=dict, description="Depth estimation parameters")
 	
 	# Output configuration (bag writing only)

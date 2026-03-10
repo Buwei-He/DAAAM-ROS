@@ -1,5 +1,5 @@
 # Launch file for CODa dataset with provided depth images
-# Usage: ros2 launch daaam_ros dataloader_coda_with_depth.launch.yaml depth_source:=3d_raw
+# Usage: ros2 launch daaam_ros dataloader_coda_with_depth.launch.yaml
 
 launch:
   # Arguments
@@ -19,7 +19,7 @@ launch:
   
   # Depth configuration
   - arg: {name: depth_method, default: 'provided', description: 'Depth method: provided, none'}
-  - arg: {name: depth_source, default: '3d_raw_estimated', description: 'Depth source: 3d_raw, 3d_raw_estimated'}
+  - arg: {name: depth_source, default: '3d_raw_estimated', description: 'Depth source: 3d_raw_estimated'}
   
   # Visualization
   - arg: {name: enable_visualizer, default: 'false', description: 'Enable Rerun visualization'}
@@ -62,7 +62,7 @@ launch:
       # Topic namespace will be /coda/
       # Topics:
       #   /coda/cam0/rgb_image
-      #   /coda/cam0/depth_image (from 3d_raw or 3d_raw_estimated)
+      #   /coda/cam0/depth_image (from 3d_raw_estimated)
       #   /coda/cam0/camera_info
       #   /coda/cam1/rgb_image
       #   /coda/cam1/depth_image (only if 3d_raw_estimated has cam1)

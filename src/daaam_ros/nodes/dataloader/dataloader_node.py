@@ -66,7 +66,7 @@ class DataloaderNode(Node):
 		
 		# Depth configuration
 		self.declare_parameter('depth_method', 'provided')  # provided, sgbm, none
-		self.declare_parameter('depth_source', '3d_raw_estimated')  # 3d_raw, 3d_raw_estimated, none
+		self.declare_parameter('depth_source', '3d_raw_estimated')  # 3d_raw_estimated, none
 		self.declare_parameter('depth_params.min_disparity', 0)
 		self.declare_parameter('depth_params.num_disparities', 128)
 		self.declare_parameter('depth_params.block_size', 11)

@@ -36,7 +36,7 @@ launch:
   - arg:
       name: 'depth_source'
       default: 'none'
-      description: 'Depth source for provided method (3d_raw, 3d_raw_estimated, none)'
+      description: 'Depth source for provided method (3d_raw_estimated, none)'
   
   - arg:
       name: 'auto_start'

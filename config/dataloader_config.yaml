@@ -14,7 +14,7 @@ stride: 1  # Process every Nth frame
 
 # Depth configuration
 depth_method: "sgbm"  # Options: provided, sgbm, none
-depth_source: "none"  # Options: 3d_raw, 3d_raw_estimated, none (only used when depth_method=provided)
+depth_source: "none"  # Options: 3d_raw_estimated, none (only used when depth_method=provided)
 depth_params:
   # SGBM parameters (OpenCV)
   min_disparity: 0

@@ -6,7 +6,6 @@ Loads data from the CODa dataset structure:
 - calibrations/sequence/*.yaml - Camera calibration
 - poses/dense_global/sequence/*.txt, fallback to poses/dense/sequence/*.txt - Pose data
 - timestamps/sequence.txt - Frame timestamps
-- 3d_raw/cam{3}/sequence/*.png - Raw depth images (optional)
 - 3d_raw_estimated/cam{0,1}/sequence/*.png - Estimated depth images (optional)
 - 3d_semantic/os1/sequence/*.pcd - Semantic point clouds (optional)
 """
@@ -264,13 +263,6 @@ class CodaDataLoader(DataLoader):
 		
 		if depth_source == '3d_raw':
 			raise(ValueError("Raw depth from cam3 is in a different reference frame. We recommend running stereo depth on the frames of cam0/cam1 instead, which are rectified and in the same frame as the RGB images."))	
-			# Raw depth from cam3 (depth camera)
-			depth_base = self.root_path / "3d_raw" / "cam3" / self.sequence
-			if depth_base.exists():
-				depth_files = natsorted(depth_base.glob("*.png"))
-				if depth_files:
-					# Map depth to cam0 for stereo pair
-					self.depth_paths["cam0"] = depth_files
 		
 		elif depth_source == '3d_raw_estimated':
 			# Estimated depth (pre-computed offline)
