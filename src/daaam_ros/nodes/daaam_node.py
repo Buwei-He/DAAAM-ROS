@@ -787,9 +787,14 @@ class DaaamNode(Node):
 				_t0 = _meta.get("started_at", 0.0)
 				_t1 = _meta.get("ended_at", 0.0)
 				if _t0 > 0 and _t1 > _t0 and hasattr(self, "orchestrator"):
+					# settle_sec=30: keep collecting until no new frames arrive for
+					# 30s, so in-progress GroundingWorker batches finish before HOI
+					# starts grounding.  Without this, only 1-3 frames are found
+					# while the worker completes batches containing clip frames.
 					grounding_index_frames = (
 						self.orchestrator.grounding_service.frame_index
-						.query_with_wait(_t0, _t1, min_frames=1, timeout=60.0)
+						.query_with_wait(_t0, _t1, min_frames=1, timeout=90.0,
+										 poll_interval=5.0, settle_sec=30.0)
 					)
 					self.logger.info(
 						f"[HOI] {clip_path.name}: {len(grounding_index_frames)} frame(s) "
