@@ -777,10 +777,31 @@ class DaaamNode(Node):
 		self.logger.info(f"Launching Cosmos HOI processing for {clip_path.name}")
 
 		def _run() -> None:
-			import time as _time
-			# Give the GroundingWorker time to flush images for this clip's window
-			# before scanning grounding_images_plain/ (avoids video-extraction fallback).
-			_time.sleep(30)
+			import json as _json
+			# Query GroundingFrameIndex for this clip's time window.
+			# query_with_wait polls until frames appear (up to 60s), eliminating
+			# the race condition where HOI starts before GroundingWorker flushes.
+			grounding_index_frames = []
+			try:
+				_meta = _json.loads(Path(metadata_path).read_text())
+				_t0 = _meta.get("started_at", 0.0)
+				_t1 = _meta.get("ended_at", 0.0)
+				if _t0 > 0 and _t1 > _t0 and hasattr(self, "orchestrator"):
+					grounding_index_frames = (
+						self.orchestrator.grounding_service.frame_index
+						.query_with_wait(_t0, _t1, min_frames=1, timeout=60.0)
+					)
+					self.logger.info(
+						f"[HOI] {clip_path.name}: {len(grounding_index_frames)} frame(s) "
+						f"from GroundingFrameIndex for window [{_t0:.1f}, {_t1:.1f}]"
+					)
+			except Exception:
+				import traceback as _tb
+				self.logger.warning(
+					f"[HOI] GroundingFrameIndex query failed, will fall back to folder scan:\n"
+					f"{_tb.format_exc()}"
+				)
+
 			try:
 				out = _hoi_process_clip(
 					clip_path=clip_path,
@@ -796,6 +817,7 @@ class DaaamNode(Node):
 					write_preview_video=self.cosmos_hoi_write_preview_video,
 					debug=self.cosmos_hoi_debug_preview,
 					media_root=self.cosmos_hoi_media_root,
+					grounding_index_frames=grounding_index_frames or None,
 				)
 				self.logger.info(f"Cosmos HOI done: {out}")
 			except Exception:
