@@ -27,8 +27,6 @@ import time
 from tf2_ros import TransformListener, Buffer
 from typing import Tuple, Optional
 import signal
-import subprocess
-
 
 from daaam.pipeline import PipelineOrchestrator, PipelineConfig
 from daaam.pipeline.models import Frame
@@ -37,6 +35,13 @@ from daaam.utils.performance import performance_measure, time_execution_sync
 from daaam.utils.vision import BoundingBox
 from daaam.utils.transform import compute_ema_velocity
 from daaam import ROOT_DIR
+from daaam_ros.utils.human_clip_recorder import (
+	ClipTrackObservation,
+	HumanClipArtifact,
+	HumanClipRecorder,
+	HumanClipRecorderConfig,
+)
+from daaam.human_reason import process_clip as _hoi_process_clip
 
 class DaaamNode(Node):
 	"""
@@ -74,6 +79,7 @@ class DaaamNode(Node):
 
 		# Initialize pipeline orchestrator with self.config
 		self._initialize_pipeline()
+		self._initialize_optional_recorders()
 
 		self._initialize_ros_components()
 		
@@ -159,6 +165,27 @@ class DaaamNode(Node):
 		# debug and output
 		self.declare_parameter("enable_debug_output", True)
 		self.declare_parameter("output_dir", "output")
+		self.declare_parameter("save_human_clips", False)
+		self.declare_parameter("human_clip_detector_weights", "yolo11n.pt")
+		self.declare_parameter("human_clip_detector_conf", 0.25)
+		self.declare_parameter("human_clip_detector_device", "")
+		self.declare_parameter("human_clip_absence_tolerance_frames", 3)
+		self.declare_parameter("human_clip_min_frames", 1)
+		self.declare_parameter("human_clip_output_fps", 0.0)
+		self.declare_parameter("enable_cosmos_hoi_processing", False)
+		self.declare_parameter("cosmos_hoi_base_url", "http://node078:8000/v1")
+		self.declare_parameter("cosmos_hoi_model", "cosmos-reason2")
+		self.declare_parameter("cosmos_hoi_api_key", "EMPTY")
+		self.declare_parameter("cosmos_hoi_media_root", "")
+		self.declare_parameter("cosmos_hoi_fps", 4.0)
+		self.declare_parameter("cosmos_hoi_grounding_fps", 1.0)
+		self.declare_parameter("cosmos_hoi_open_verbs", True)
+		self.declare_parameter("cosmos_hoi_extra_prompt", "")
+		self.declare_parameter("cosmos_hoi_write_preview_video", False)
+		self.declare_parameter("cosmos_hoi_debug_preview", False)
+		self.declare_parameter("cosmos_hoi_active_object_refresh_every", 5)
+		self.declare_parameter("cosmos_hoi_match_iou_threshold", 0.1)
+		self.declare_parameter("cosmos_hoi_match_temporal_window_sec", 1.0)
 
 	def _get_parameters(self) -> None:
 		"""Get parameter values."""
@@ -221,6 +248,42 @@ class DaaamNode(Node):
 		# debug
 		self.enable_debug_output = self.get_parameter("enable_debug_output").get_parameter_value().bool_value
 		self.output_dir = Path(self.get_parameter("output_dir").get_parameter_value().string_value)
+		self.save_human_clips = self.get_parameter("save_human_clips").get_parameter_value().bool_value
+		self.human_clip_detector_weights = self.get_parameter("human_clip_detector_weights").get_parameter_value().string_value
+		self.human_clip_detector_conf = self.get_parameter("human_clip_detector_conf").get_parameter_value().double_value
+		human_clip_detector_device = self.get_parameter("human_clip_detector_device").get_parameter_value().string_value
+		self.human_clip_detector_device = human_clip_detector_device if human_clip_detector_device else None
+		self.human_clip_absence_tolerance_frames = self.get_parameter(
+			"human_clip_absence_tolerance_frames"
+		).get_parameter_value().integer_value
+		self.human_clip_min_frames = self.get_parameter("human_clip_min_frames").get_parameter_value().integer_value
+		self.human_clip_output_fps = self.get_parameter("human_clip_output_fps").get_parameter_value().double_value
+		self.enable_cosmos_hoi_processing = self.get_parameter(
+			"enable_cosmos_hoi_processing"
+		).get_parameter_value().bool_value
+		self.cosmos_hoi_base_url = self.get_parameter("cosmos_hoi_base_url").get_parameter_value().string_value
+		self.cosmos_hoi_model = self.get_parameter("cosmos_hoi_model").get_parameter_value().string_value
+		self.cosmos_hoi_api_key = self.get_parameter("cosmos_hoi_api_key").get_parameter_value().string_value
+		self.cosmos_hoi_media_root = self.get_parameter("cosmos_hoi_media_root").get_parameter_value().string_value
+		self.cosmos_hoi_fps = self.get_parameter("cosmos_hoi_fps").get_parameter_value().double_value
+		self.cosmos_hoi_grounding_fps = self.get_parameter("cosmos_hoi_grounding_fps").get_parameter_value().double_value
+		self.cosmos_hoi_open_verbs = self.get_parameter("cosmos_hoi_open_verbs").get_parameter_value().bool_value
+		self.cosmos_hoi_extra_prompt = self.get_parameter("cosmos_hoi_extra_prompt").get_parameter_value().string_value
+		self.cosmos_hoi_write_preview_video = self.get_parameter(
+			"cosmos_hoi_write_preview_video"
+		).get_parameter_value().bool_value
+		self.cosmos_hoi_debug_preview = self.get_parameter(
+			"cosmos_hoi_debug_preview"
+		).get_parameter_value().bool_value
+		self.cosmos_hoi_active_object_refresh_every = self.get_parameter(
+			"cosmos_hoi_active_object_refresh_every"
+		).get_parameter_value().integer_value
+		self.cosmos_hoi_match_iou_threshold = self.get_parameter(
+			"cosmos_hoi_match_iou_threshold"
+		).get_parameter_value().double_value
+		self.cosmos_hoi_match_temporal_window_sec = self.get_parameter(
+			"cosmos_hoi_match_temporal_window_sec"
+		).get_parameter_value().double_value
 
 	def _load_pipeline_config(self) -> None:
 		"""Load and customize pipeline configuration."""
@@ -359,14 +422,43 @@ class DaaamNode(Node):
 			self.logger.error(f"Failed to initialize pipeline orchestrator: {e}")
 			raise
 
+	def _initialize_optional_recorders(self) -> None:
+		"""Initialize optional video recorders."""
+		self.human_clip_recorder = None
+		self.human_clip_recording_enabled = self.save_human_clips or self.enable_cosmos_hoi_processing
+		if not self.human_clip_recording_enabled:
+			return
+		if self.enable_cosmos_hoi_processing and not self.save_human_clips:
+			self.logger.info("Enabling human clip recording because Cosmos HOI processing is active")
+
+		recorder_config = HumanClipRecorderConfig(
+			enabled=self.human_clip_recording_enabled,
+			detector_weights=self.human_clip_detector_weights,
+			detector_conf=self.human_clip_detector_conf,
+			detector_device=self.human_clip_detector_device,
+			absence_tolerance_frames=self.human_clip_absence_tolerance_frames,
+			min_clip_frames=self.human_clip_min_frames,
+			output_fps=self.human_clip_output_fps,
+		)
+		self.human_clip_recorder = HumanClipRecorder(
+			config=recorder_config,
+			output_dir=self.orchestrator.output_dir,
+			logger=self.logger,
+			on_clip_finalized=self._handle_human_clip_finalized,
+		)
+
 	def _initialize_ros_components(self) -> None:
 		"""Initialize ROS publishers, subscribers, and other components."""
 		# msg -> img
 		self.bridge = CvBridge()
 		
-		# state vars 
+		# state vars
 		self.latest_camera_info = None
 		self.processing_lock = threading.Lock()
+		# Executor for HOI background tasks — shutdown(wait=True) in destroy_node
+		# so clips are never truncated when the node exits.
+		from concurrent.futures import ThreadPoolExecutor as _TPE
+		self._hoi_executor = _TPE(max_workers=4, thread_name_prefix="cosmos_hoi")
 		
 		# create message_filters subscribers for synchronization
 		self.rgb_subscriber = message_filters.Subscriber(
@@ -523,6 +615,18 @@ class DaaamNode(Node):
 			with performance_measure("process_frame", self.logger.info, tracker):
 				label_image, color_image = self.orchestrator.process_frame(frame)
 
+			if self.human_clip_recorder is not None:
+				try:
+					track_observations = self._build_clip_track_observations(frame)
+					self.human_clip_recorder.process_frame(
+						cv_image,
+						timestamp,
+						frame.frame_id,
+						track_observations,
+					)
+				except Exception as recorder_error:
+					self.logger.error(f"Human clip recording failed on frame {frame.frame_id}: {recorder_error}")
+
 			self._publish_segmentation_results(label_image, color_image, rgb_msg.header)
 
 			self.logger.debug(f"Processed synchronized frame with {len(frame.tracks)} tracks")
@@ -636,12 +740,82 @@ class DaaamNode(Node):
 			
 		except Exception as e:
 			self.logger.error(f"Error publishing corrected DSG: {e}")
+
+	def _build_clip_track_observations(self, frame: Frame) -> list[ClipTrackObservation]:
+		"""Collect DAAAM track/semantic state for a clip sidecar frame."""
+		state_lock = getattr(self.orchestrator, "_state_lock", None)
+		if state_lock is not None:
+			with state_lock:
+				object_labels = dict(self.orchestrator.object_labels)
+		else:
+			object_labels = dict(self.orchestrator.object_labels)
+
+		observations: list[ClipTrackObservation] = []
+		for track in frame.tracks:
+			track_id = int(track.id)
+			bbox_xyxy = [float(v) for v in np.asarray(track.bbox).reshape(-1)[:4]]
+			if len(bbox_xyxy) != 4:
+				continue
+
+			observations.append(
+				ClipTrackObservation(
+					track_id=track_id,
+					semantic_id=int(object_labels.get(track_id, -1)),
+					bbox_xyxy=bbox_xyxy,
+					depth_valid=bool(track.depth_valid),
+				)
+			)
+		return observations
+
+	def _handle_human_clip_finalized(self, artifact: HumanClipArtifact) -> None:
+		"""Spawn HOI processing for a finalized clip in a background thread."""
+		if not self.enable_cosmos_hoi_processing:
+			return
+
+		clip_path = artifact.clip_path
+		metadata_path = artifact.metadata_path
+		self.logger.info(f"Launching Cosmos HOI processing for {clip_path.name}")
+
+		def _run() -> None:
+			import time as _time
+			# Give the GroundingWorker time to flush images for this clip's window
+			# before scanning grounding_images_plain/ (avoids video-extraction fallback).
+			_time.sleep(30)
+			try:
+				out = _hoi_process_clip(
+					clip_path=clip_path,
+					metadata_path=metadata_path,
+					base_url=self.cosmos_hoi_base_url,
+					model=self.cosmos_hoi_model,
+					api_key=self.cosmos_hoi_api_key,
+					fps=self.cosmos_hoi_fps,
+					grounding_fps=self.cosmos_hoi_grounding_fps,
+					open_verbs=self.cosmos_hoi_open_verbs,
+					extra_prompt=self.cosmos_hoi_extra_prompt,
+					match_iou_threshold=self.cosmos_hoi_match_iou_threshold,
+					write_preview_video=self.cosmos_hoi_write_preview_video,
+					debug=self.cosmos_hoi_debug_preview,
+					media_root=self.cosmos_hoi_media_root,
+				)
+				self.logger.info(f"Cosmos HOI done: {out}")
+			except Exception:
+				import traceback as _tb
+				self.logger.error(
+					f"Cosmos HOI failed for {clip_path.name}:\n{_tb.format_exc()}"
+				)
+
+		self._hoi_executor.submit(_run)
 	
 	def destroy_node(self) -> None:
 		"""Cleanup when node is destroyed."""
 		print("[Shutdown] Shutting down MMLLM Grounded SAM Node")
 
 		try:
+			if hasattr(self, 'human_clip_recorder') and self.human_clip_recorder is not None:
+				print("[Shutdown] Finalizing human clip recorder...")
+				self.human_clip_recorder.close()
+				print("[Shutdown] Human clip recorder finalized")
+
 			# Publish final semantic update before stopping
 			# if hasattr(self, 'orchestrator') and hasattr(self, 'semantic_updates_publisher'):
 				# try:
@@ -657,13 +831,31 @@ class DaaamNode(Node):
 				# except Exception as e:
 				# 	print(f"[Shutdown] Error publishing final semantic update: {e}")
 
+			# wait for any in-flight HOI processing tasks before stopping
+			if hasattr(self, '_hoi_executor'):
+				print("[Shutdown] Waiting for Cosmos HOI tasks to finish...")
+				self._hoi_executor.shutdown(wait=True, cancel_futures=False)
+				print("[Shutdown] Cosmos HOI tasks done")
+
 			# stop pipeline orchestrator
-
-
 			if hasattr(self, 'orchestrator'):
 				print("[Shutdown] Stopping orchestrator...")
 				self.orchestrator.stop()  # Exports performance statistics and stops workers
 				print("[Shutdown] Orchestrator stopped")
+
+			# corrections.yaml is now written — back-fill object_name in HOI YAMLs
+			if hasattr(self, 'orchestrator') and hasattr(self.orchestrator, 'output_dir'):
+				from daaam.human_reason import enrich_hoi_yaml_labels, group_events
+				from pathlib import Path
+				_out = Path(self.orchestrator.output_dir)
+				enrich_hoi_yaml_labels(_out)
+				if getattr(self, 'enable_cosmos_hoi_processing', False):
+					group_events(
+						output_dir=_out,
+						base_url=self.cosmos_hoi_base_url,
+						model=self.cosmos_hoi_model,
+						api_key=self.cosmos_hoi_api_key,
+					)
 
 			import time
 			time.sleep(1.0)  # Grace period for final log writes
