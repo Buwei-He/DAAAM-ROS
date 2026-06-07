@@ -50,7 +50,6 @@ _HUMAN_REASON_PARAM_DEFAULTS = {
 	"human_clip_detector_device": None,
 	"human_clip_min_frames": 4,
 	"human_clip_output_fps": 4.0,
-	"human_clip_context_sec": 1.0,
 	"enable_cosmos_hoi_processing": False,
 	"cosmos_hoi_base_url": "http://localhost:8000/v1",
 	"cosmos_hoi_model": "cosmos-reason2",
@@ -58,17 +57,6 @@ _HUMAN_REASON_PARAM_DEFAULTS = {
 	"cosmos_hoi_media_root": "",
 	"cosmos_hoi_fps": 4.0,
 	"cosmos_hoi_match_iou_threshold": 0.1,
-	"cosmos_hoi_streaming": False,
-	"cosmos_hoi_chunk_duration": 6.0,
-	"cosmos_hoi_chunk_overlap": 1.0,
-	"cosmos_hoi_matching_strategy": "geometric",
-	"cosmos_hoi_matching_clip_device": "cuda",
-	"cosmos_hoi_matching_window_sec": 1.5,
-	"cosmos_hoi_matching_crop_pad_frac": 0.1,
-	"cosmos_hoi_matching_min_score": 0.0,
-	"cosmos_hoi_matching_vlm_disambiguation": True,
-	"cosmos_hoi_matching_ambiguity_margin": 0.05,
-	"cosmos_hoi_matching_top_k": 3,
 	"enable_semantic_event_post_processing": True,
 	"semantic_event_output_name": "events_semantic.yaml",
 	"semantic_event_neighbor_window_sec": 8.0,
@@ -204,7 +192,6 @@ class DaaamNode(Node):
 		self.declare_parameter("human_clip_detector_device", "")
 		self.declare_parameter("human_clip_min_frames", 4)
 		self.declare_parameter("human_clip_output_fps", 4.0)
-		self.declare_parameter("human_clip_context_sec", 1.0)
 		self.declare_parameter("enable_cosmos_hoi_processing", False)
 		self.declare_parameter("cosmos_hoi_base_url", "http://localhost:8000/v1")
 		self.declare_parameter("cosmos_hoi_model", "cosmos-reason2")
@@ -212,17 +199,6 @@ class DaaamNode(Node):
 		self.declare_parameter("cosmos_hoi_media_root", "")
 		self.declare_parameter("cosmos_hoi_fps", 4.0)
 		self.declare_parameter("cosmos_hoi_match_iou_threshold", 0.1)
-		self.declare_parameter("cosmos_hoi_streaming", False)
-		self.declare_parameter("cosmos_hoi_chunk_duration", 6.0)
-		self.declare_parameter("cosmos_hoi_chunk_overlap", 1.0)
-		self.declare_parameter("cosmos_hoi_matching_strategy", "geometric")
-		self.declare_parameter("cosmos_hoi_matching_clip_device", "cuda")
-		self.declare_parameter("cosmos_hoi_matching_window_sec", 1.5)
-		self.declare_parameter("cosmos_hoi_matching_crop_pad_frac", 0.1)
-		self.declare_parameter("cosmos_hoi_matching_min_score", 0.0)
-		self.declare_parameter("cosmos_hoi_matching_vlm_disambiguation", True)
-		self.declare_parameter("cosmos_hoi_matching_ambiguity_margin", 0.05)
-		self.declare_parameter("cosmos_hoi_matching_top_k", 3)
 		self.declare_parameter("enable_semantic_event_post_processing", True)
 		self.declare_parameter("semantic_event_output_name", "events_semantic.yaml")
 		self.declare_parameter("semantic_event_neighbor_window_sec", 8.0)
@@ -297,7 +273,6 @@ class DaaamNode(Node):
 		self.human_clip_detector_device = human_clip_detector_device if human_clip_detector_device else None
 		self.human_clip_min_frames = self.get_parameter("human_clip_min_frames").get_parameter_value().integer_value
 		self.human_clip_output_fps = self.get_parameter("human_clip_output_fps").get_parameter_value().double_value
-		self.human_clip_context_sec = self.get_parameter("human_clip_context_sec").get_parameter_value().double_value
 		self.enable_cosmos_hoi_processing = self.get_parameter(
 			"enable_cosmos_hoi_processing"
 		).get_parameter_value().bool_value
@@ -311,39 +286,6 @@ class DaaamNode(Node):
 		self.cosmos_hoi_match_iou_threshold = self.get_parameter(
 			"cosmos_hoi_match_iou_threshold"
 		).get_parameter_value().double_value
-		self.cosmos_hoi_streaming = self.get_parameter(
-			"cosmos_hoi_streaming"
-		).get_parameter_value().bool_value
-		self.cosmos_hoi_chunk_duration = self.get_parameter(
-			"cosmos_hoi_chunk_duration"
-		).get_parameter_value().double_value
-		self.cosmos_hoi_chunk_overlap = self.get_parameter(
-			"cosmos_hoi_chunk_overlap"
-		).get_parameter_value().double_value
-		self.cosmos_hoi_matching_strategy = self.get_parameter(
-			"cosmos_hoi_matching_strategy"
-		).get_parameter_value().string_value
-		self.cosmos_hoi_matching_clip_device = self.get_parameter(
-			"cosmos_hoi_matching_clip_device"
-		).get_parameter_value().string_value
-		self.cosmos_hoi_matching_window_sec = self.get_parameter(
-			"cosmos_hoi_matching_window_sec"
-		).get_parameter_value().double_value
-		self.cosmos_hoi_matching_crop_pad_frac = self.get_parameter(
-			"cosmos_hoi_matching_crop_pad_frac"
-		).get_parameter_value().double_value
-		self.cosmos_hoi_matching_min_score = self.get_parameter(
-			"cosmos_hoi_matching_min_score"
-		).get_parameter_value().double_value
-		self.cosmos_hoi_matching_vlm_disambiguation = self.get_parameter(
-			"cosmos_hoi_matching_vlm_disambiguation"
-		).get_parameter_value().bool_value
-		self.cosmos_hoi_matching_ambiguity_margin = self.get_parameter(
-			"cosmos_hoi_matching_ambiguity_margin"
-		).get_parameter_value().double_value
-		self.cosmos_hoi_matching_top_k = self.get_parameter(
-			"cosmos_hoi_matching_top_k"
-		).get_parameter_value().integer_value
 		self.enable_semantic_event_post_processing = self.get_parameter(
 			"enable_semantic_event_post_processing"
 		).get_parameter_value().bool_value
@@ -387,7 +329,6 @@ class DaaamNode(Node):
 			SegmentationConfig, TrackingConfig, GroundingConfig,
 			WorkerConfig, DepthConfig, SceneGraphConfig,
 			HumanReasonConfig, HumanClipConfig, CosmosHOIConfig, SemanticEventConfig,
-			HOIMatchingConfig,
 		)
 		
 		return PipelineConfig(
@@ -438,19 +379,6 @@ class DaaamNode(Node):
 					media_root=self.cosmos_hoi_media_root,
 					fps=self.cosmos_hoi_fps,
 					match_iou_threshold=self.cosmos_hoi_match_iou_threshold,
-					hoi_streaming=self.cosmos_hoi_streaming,
-					hoi_chunk_duration=self.cosmos_hoi_chunk_duration,
-					hoi_chunk_overlap=self.cosmos_hoi_chunk_overlap,
-					matching=HOIMatchingConfig(
-						strategy=self.cosmos_hoi_matching_strategy,
-						clip_device=self.cosmos_hoi_matching_clip_device,
-						window_sec=self.cosmos_hoi_matching_window_sec,
-						crop_pad_frac=self.cosmos_hoi_matching_crop_pad_frac,
-						min_score=self.cosmos_hoi_matching_min_score,
-						vlm_disambiguation=self.cosmos_hoi_matching_vlm_disambiguation,
-						ambiguity_margin=self.cosmos_hoi_matching_ambiguity_margin,
-						top_k=self.cosmos_hoi_matching_top_k,
-					),
 				),
 				semantic_events=SemanticEventConfig(
 					enabled=self.enable_semantic_event_post_processing,
@@ -482,7 +410,6 @@ class DaaamNode(Node):
 		self._use_config_default("human_clip_detector_device", human_clips.detector_device)
 		self._use_config_default("human_clip_min_frames", human_clips.min_frames)
 		self._use_config_default("human_clip_output_fps", human_clips.output_fps)
-		self._use_config_default("human_clip_context_sec", human_clips.context_sec)
 
 		cosmos_hoi = human_reason.cosmos_hoi
 		self._use_config_default("enable_cosmos_hoi_processing", cosmos_hoi.enabled)
@@ -492,18 +419,6 @@ class DaaamNode(Node):
 		self._use_config_default("cosmos_hoi_media_root", cosmos_hoi.media_root)
 		self._use_config_default("cosmos_hoi_fps", cosmos_hoi.fps)
 		self._use_config_default("cosmos_hoi_match_iou_threshold", cosmos_hoi.match_iou_threshold)
-		self._use_config_default("cosmos_hoi_streaming", cosmos_hoi.hoi_streaming)
-		self._use_config_default("cosmos_hoi_chunk_duration", cosmos_hoi.hoi_chunk_duration)
-		self._use_config_default("cosmos_hoi_chunk_overlap", cosmos_hoi.hoi_chunk_overlap)
-		matching = cosmos_hoi.matching
-		self._use_config_default("cosmos_hoi_matching_strategy", matching.strategy)
-		self._use_config_default("cosmos_hoi_matching_clip_device", matching.clip_device)
-		self._use_config_default("cosmos_hoi_matching_window_sec", matching.window_sec)
-		self._use_config_default("cosmos_hoi_matching_crop_pad_frac", matching.crop_pad_frac)
-		self._use_config_default("cosmos_hoi_matching_min_score", matching.min_score)
-		self._use_config_default("cosmos_hoi_matching_vlm_disambiguation", matching.vlm_disambiguation)
-		self._use_config_default("cosmos_hoi_matching_ambiguity_margin", matching.ambiguity_margin)
-		self._use_config_default("cosmos_hoi_matching_top_k", matching.top_k)
 
 		semantic_events = human_reason.semantic_events
 		self._use_config_default("enable_semantic_event_post_processing", semantic_events.enabled)
@@ -573,7 +488,6 @@ class DaaamNode(Node):
 		self.config.human_reason.human_clips.detector_device = self.human_clip_detector_device
 		self.config.human_reason.human_clips.min_frames = self.human_clip_min_frames
 		self.config.human_reason.human_clips.output_fps = self.human_clip_output_fps
-		self.config.human_reason.human_clips.context_sec = self.human_clip_context_sec
 		self.config.human_reason.cosmos_hoi.enabled = self.enable_cosmos_hoi_processing
 		self.config.human_reason.cosmos_hoi.base_url = self.cosmos_hoi_base_url
 		self.config.human_reason.cosmos_hoi.model = self.cosmos_hoi_model
@@ -581,17 +495,6 @@ class DaaamNode(Node):
 		self.config.human_reason.cosmos_hoi.media_root = self.cosmos_hoi_media_root
 		self.config.human_reason.cosmos_hoi.fps = self.cosmos_hoi_fps
 		self.config.human_reason.cosmos_hoi.match_iou_threshold = self.cosmos_hoi_match_iou_threshold
-		self.config.human_reason.cosmos_hoi.hoi_streaming = self.cosmos_hoi_streaming
-		self.config.human_reason.cosmos_hoi.hoi_chunk_duration = self.cosmos_hoi_chunk_duration
-		self.config.human_reason.cosmos_hoi.hoi_chunk_overlap = self.cosmos_hoi_chunk_overlap
-		self.config.human_reason.cosmos_hoi.matching.strategy = self.cosmos_hoi_matching_strategy
-		self.config.human_reason.cosmos_hoi.matching.clip_device = self.cosmos_hoi_matching_clip_device
-		self.config.human_reason.cosmos_hoi.matching.window_sec = self.cosmos_hoi_matching_window_sec
-		self.config.human_reason.cosmos_hoi.matching.crop_pad_frac = self.cosmos_hoi_matching_crop_pad_frac
-		self.config.human_reason.cosmos_hoi.matching.min_score = self.cosmos_hoi_matching_min_score
-		self.config.human_reason.cosmos_hoi.matching.vlm_disambiguation = self.cosmos_hoi_matching_vlm_disambiguation
-		self.config.human_reason.cosmos_hoi.matching.ambiguity_margin = self.cosmos_hoi_matching_ambiguity_margin
-		self.config.human_reason.cosmos_hoi.matching.top_k = self.cosmos_hoi_matching_top_k
 		self.config.human_reason.semantic_events.enabled = self.enable_semantic_event_post_processing
 		self.config.human_reason.semantic_events.output_name = self.semantic_event_output_name
 		self.config.human_reason.semantic_events.neighbor_window_sec = self.semantic_event_neighbor_window_sec
@@ -634,22 +537,12 @@ class DaaamNode(Node):
 			detector_device=self.human_clip_detector_device,
 			min_clip_frames=self.human_clip_min_frames,
 			output_fps=self.human_clip_output_fps,
-			context_sec=self.human_clip_context_sec,
-		)
-		self._active_streaming_worker: Optional["StreamingHOIWorker"] = None
-		streaming_enabled = (
-			self.enable_cosmos_hoi_processing and self.cosmos_hoi_streaming
 		)
 		self.human_clip_recorder = HumanClipRecorder(
 			config=recorder_config,
 			output_dir=self.orchestrator.output_dir,
 			logger=self.logger,
 			on_clip_finalized=self._handle_human_clip_finalized,
-			on_clip_started=self._on_hoi_clip_started if streaming_enabled else None,
-			on_clip_discarded=self._on_hoi_clip_discarded if streaming_enabled else None,
-			on_chunk_ready=self._on_hoi_chunk_ready if streaming_enabled else None,
-			streaming_chunk_sec=self.cosmos_hoi_chunk_duration if streaming_enabled else 0.0,
-			streaming_overlap_sec=self.cosmos_hoi_chunk_overlap if streaming_enabled else 0.0,
 		)
 
 	def _initialize_ros_components(self) -> None:
@@ -1111,37 +1004,6 @@ class DaaamNode(Node):
 			)
 		return observations
 
-	def _on_hoi_clip_started(self, clip_path) -> None:
-		"""Create a per-clip StreamingHOIWorker when a new clip begins recording."""
-		from openai import OpenAI
-		from daaam.human_reason.streaming_worker import StreamingHOIWorker  # not yet in dev branch
-		self._active_streaming_worker = StreamingHOIWorker(
-			client=OpenAI(base_url=self.cosmos_hoi_base_url, api_key=self.cosmos_hoi_api_key),
-			model=self.cosmos_hoi_model,
-			fps=self.cosmos_hoi_fps,
-			media_root=self.cosmos_hoi_media_root,
-			chunk_duration=self.cosmos_hoi_chunk_duration,
-			chunk_overlap=self.cosmos_hoi_chunk_overlap,
-		)
-		clip_name = clip_path.name if hasattr(clip_path, "name") else clip_path
-		self.logger.info(f"StreamingHOIWorker started for {clip_name}")
-
-	def _on_hoi_clip_discarded(self, clip_path) -> None:
-		"""Stop the streaming worker when the recorder discards a short clip."""
-		worker = self._active_streaming_worker
-		self._active_streaming_worker = None
-		if worker is not None:
-			worker.stop(wait=False)
-			clip_name = clip_path.name if hasattr(clip_path, "name") else clip_path
-			self.logger.info(f"StreamingHOIWorker stopped for discarded clip {clip_name}")
-
-	def _on_hoi_chunk_ready(self, chunk_path, t_start: float, t_end: float, chunk_idx: int) -> None:
-		"""Forward a completed chunk MP4 to the active streaming worker (non-blocking)."""
-		worker = self._active_streaming_worker
-		if worker is not None:
-			worker.submit_chunk(chunk_path, t_start, t_end, chunk_idx)
-			self.logger.debug(f"Submitted chunk {chunk_idx} (t={t_start:.1f}–{t_end:.1f}s) to streaming worker")
-
 	def _handle_human_clip_finalized(self, artifact: HumanClipArtifact) -> None:
 		"""Spawn HOI processing for a finalized clip in a background thread."""
 		if not self.enable_cosmos_hoi_processing:
@@ -1149,38 +1011,11 @@ class DaaamNode(Node):
 
 		clip_path = artifact.clip_path
 		metadata_path = artifact.metadata_path
-		worker = self._active_streaming_worker
-		self._active_streaming_worker = None
 		self.logger.info(f"Launching Cosmos HOI processing for {clip_path.name}")
-
-		# Snapshot CLIP features from DAM grounding before the thread runs so the
-		# clip_vlm matcher can skip MP4 re-decoding and image re-embedding.
-		precomputed: dict[int, list[float]] | None = None
-		if (
-			self.config.human_reason.cosmos_hoi.matching.strategy == "clip_vlm"
-			and hasattr(self, "orchestrator")
-			and hasattr(self.orchestrator, "scene_graph_service")
-		):
-			svc = self.orchestrator.scene_graph_service
-			if hasattr(svc, "corrections"):
-				precomputed = {
-					sid: (corr.selectframe_clip_feature.tolist()
-						  if hasattr(corr.selectframe_clip_feature, "tolist")
-						  else list(corr.selectframe_clip_feature))
-					for sid, corr in svc.corrections.items()
-					if getattr(corr, "selectframe_clip_feature", None) is not None
-				} or None
-				if precomputed:
-					self.logger.info(
-						f"[HOI] Precomputed CLIP features for {len(precomputed)} object(s) available"
-					)
 
 		def _run() -> None:
 			start_wall = time.time()
 			try:
-				# If a streaming worker is active, collect its results (blocks until
-				# all queued chunks finish inference) then bypass Pass 1 in process_clip.
-				pass1 = worker.collect() if worker is not None else None
 				out = _hoi_process_clip(
 					clip_path=clip_path,
 					metadata_path=metadata_path,
@@ -1190,13 +1025,6 @@ class DaaamNode(Node):
 					fps=self.cosmos_hoi_fps,
 					match_iou_threshold=self.cosmos_hoi_match_iou_threshold,
 					media_root=self.cosmos_hoi_media_root,
-					hoi_streaming=self.cosmos_hoi_streaming,
-					hoi_chunk_duration=self.cosmos_hoi_chunk_duration,
-					hoi_chunk_overlap=self.cosmos_hoi_chunk_overlap,
-					pass1_interactions=pass1,
-					matching=self.config.human_reason.cosmos_hoi.matching,
-					dam_cfg=self.config.workers.dam_grounding_config,
-					precomputed_features=precomputed,
 				)
 				duration = time.time() - start_wall
 				self.logger.info(f"Cosmos HOI done in {duration:.1f}s: {out}")
