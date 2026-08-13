@@ -50,6 +50,7 @@ _HUMAN_REASON_PARAM_DEFAULTS = {
 	"human_clip_detector_device": None,
 	"human_clip_min_frames": 4,
 	"human_clip_output_fps": 4.0,
+	"egocentric": False,
 	"enable_cosmos_hoi_processing": False,
 	"cosmos_hoi_base_url": "http://localhost:8000/v1",
 	"cosmos_hoi_model": "cosmos-reason2",
@@ -57,10 +58,13 @@ _HUMAN_REASON_PARAM_DEFAULTS = {
 	"cosmos_hoi_media_root": "",
 	"cosmos_hoi_fps": 4.0,
 	"cosmos_hoi_match_iou_threshold": 0.1,
+	"cosmos_hoi_semantic_reranking": False,
+	"cosmos_hoi_chunk_duration_sec": 0.0,
 	"enable_semantic_event_post_processing": True,
 	"semantic_event_output_name": "events_semantic.yaml",
 	"semantic_event_neighbor_window_sec": 8.0,
 	"semantic_event_confidence_threshold": 0.65,
+	"event_grouper_model": "gpt-5.4-mini",
 }
 
 class DaaamNode(Node):
@@ -192,6 +196,7 @@ class DaaamNode(Node):
 		self.declare_parameter("human_clip_detector_device", "")
 		self.declare_parameter("human_clip_min_frames", 4)
 		self.declare_parameter("human_clip_output_fps", 4.0)
+		self.declare_parameter("egocentric", False)
 		self.declare_parameter("enable_cosmos_hoi_processing", False)
 		self.declare_parameter("cosmos_hoi_base_url", "http://localhost:8000/v1")
 		self.declare_parameter("cosmos_hoi_model", "cosmos-reason2")
@@ -199,10 +204,13 @@ class DaaamNode(Node):
 		self.declare_parameter("cosmos_hoi_media_root", "")
 		self.declare_parameter("cosmos_hoi_fps", 4.0)
 		self.declare_parameter("cosmos_hoi_match_iou_threshold", 0.1)
+		self.declare_parameter("cosmos_hoi_semantic_reranking", False)
+		self.declare_parameter("cosmos_hoi_chunk_duration_sec", 0.0)
 		self.declare_parameter("enable_semantic_event_post_processing", True)
 		self.declare_parameter("semantic_event_output_name", "events_semantic.yaml")
 		self.declare_parameter("semantic_event_neighbor_window_sec", 8.0)
 		self.declare_parameter("semantic_event_confidence_threshold", 0.65)
+		self.declare_parameter("event_grouper_model", "gpt-5.4-mini")
 
 	def _get_parameters(self) -> None:
 		"""Get parameter values."""
@@ -273,6 +281,7 @@ class DaaamNode(Node):
 		self.human_clip_detector_device = human_clip_detector_device if human_clip_detector_device else None
 		self.human_clip_min_frames = self.get_parameter("human_clip_min_frames").get_parameter_value().integer_value
 		self.human_clip_output_fps = self.get_parameter("human_clip_output_fps").get_parameter_value().double_value
+		self.egocentric = self.get_parameter("egocentric").get_parameter_value().bool_value
 		self.enable_cosmos_hoi_processing = self.get_parameter(
 			"enable_cosmos_hoi_processing"
 		).get_parameter_value().bool_value
@@ -286,6 +295,12 @@ class DaaamNode(Node):
 		self.cosmos_hoi_match_iou_threshold = self.get_parameter(
 			"cosmos_hoi_match_iou_threshold"
 		).get_parameter_value().double_value
+		self.cosmos_hoi_semantic_reranking = self.get_parameter(
+			"cosmos_hoi_semantic_reranking"
+		).get_parameter_value().bool_value
+		self.cosmos_hoi_chunk_duration_sec = self.get_parameter(
+			"cosmos_hoi_chunk_duration_sec"
+		).get_parameter_value().double_value
 		self.enable_semantic_event_post_processing = self.get_parameter(
 			"enable_semantic_event_post_processing"
 		).get_parameter_value().bool_value
@@ -298,6 +313,7 @@ class DaaamNode(Node):
 		self.semantic_event_confidence_threshold = self.get_parameter(
 			"semantic_event_confidence_threshold"
 		).get_parameter_value().double_value
+		self.event_grouper_model = self.get_parameter("event_grouper_model").get_parameter_value().string_value
 
 	def _load_pipeline_config(self) -> None:
 		"""Load and customize pipeline configuration."""
@@ -403,6 +419,8 @@ class DaaamNode(Node):
 		if human_reason is None:
 			return
 
+		self._use_config_default("egocentric", human_reason.egocentric)
+
 		human_clips = human_reason.human_clips
 		self._use_config_default("save_human_clips", human_clips.enabled)
 		self._use_config_default("human_clip_detector_weights", human_clips.detector_weights)
@@ -419,12 +437,15 @@ class DaaamNode(Node):
 		self._use_config_default("cosmos_hoi_media_root", cosmos_hoi.media_root)
 		self._use_config_default("cosmos_hoi_fps", cosmos_hoi.fps)
 		self._use_config_default("cosmos_hoi_match_iou_threshold", cosmos_hoi.match_iou_threshold)
+		self._use_config_default("cosmos_hoi_semantic_reranking", cosmos_hoi.semantic_reranking)
+		self._use_config_default("cosmos_hoi_chunk_duration_sec", cosmos_hoi.hoi_chunk_duration_sec)
 
 		semantic_events = human_reason.semantic_events
 		self._use_config_default("enable_semantic_event_post_processing", semantic_events.enabled)
 		self._use_config_default("semantic_event_output_name", semantic_events.output_name)
 		self._use_config_default("semantic_event_neighbor_window_sec", semantic_events.neighbor_window_sec)
 		self._use_config_default("semantic_event_confidence_threshold", semantic_events.confidence_threshold)
+		self._use_config_default("event_grouper_model", semantic_events.event_grouper_model)
 
 	def _override_config_with_parameters(self) -> None:
 		"""Override configuration with ROS parameters."""
@@ -488,6 +509,7 @@ class DaaamNode(Node):
 		self.config.human_reason.human_clips.detector_device = self.human_clip_detector_device
 		self.config.human_reason.human_clips.min_frames = self.human_clip_min_frames
 		self.config.human_reason.human_clips.output_fps = self.human_clip_output_fps
+		self.config.human_reason.egocentric = self.egocentric
 		self.config.human_reason.cosmos_hoi.enabled = self.enable_cosmos_hoi_processing
 		self.config.human_reason.cosmos_hoi.base_url = self.cosmos_hoi_base_url
 		self.config.human_reason.cosmos_hoi.model = self.cosmos_hoi_model
@@ -495,6 +517,8 @@ class DaaamNode(Node):
 		self.config.human_reason.cosmos_hoi.media_root = self.cosmos_hoi_media_root
 		self.config.human_reason.cosmos_hoi.fps = self.cosmos_hoi_fps
 		self.config.human_reason.cosmos_hoi.match_iou_threshold = self.cosmos_hoi_match_iou_threshold
+		self.config.human_reason.cosmos_hoi.semantic_reranking = self.cosmos_hoi_semantic_reranking
+		self.config.human_reason.cosmos_hoi.hoi_chunk_duration_sec = self.cosmos_hoi_chunk_duration_sec
 		self.config.human_reason.semantic_events.enabled = self.enable_semantic_event_post_processing
 		self.config.human_reason.semantic_events.output_name = self.semantic_event_output_name
 		self.config.human_reason.semantic_events.neighbor_window_sec = self.semantic_event_neighbor_window_sec
@@ -537,6 +561,7 @@ class DaaamNode(Node):
 			detector_device=self.human_clip_detector_device,
 			min_clip_frames=self.human_clip_min_frames,
 			output_fps=self.human_clip_output_fps,
+			egocentric=self.egocentric,
 		)
 		self.human_clip_recorder = HumanClipRecorder(
 			config=recorder_config,
@@ -1025,6 +1050,8 @@ class DaaamNode(Node):
 					fps=self.cosmos_hoi_fps,
 					match_iou_threshold=self.cosmos_hoi_match_iou_threshold,
 					media_root=self.cosmos_hoi_media_root,
+					hoi_chunk_duration_sec=self.cosmos_hoi_chunk_duration_sec,
+					egocentric=self.egocentric,
 				)
 				duration = time.time() - start_wall
 				self.logger.info(f"Cosmos HOI done in {duration:.1f}s: {out}")
@@ -1113,28 +1140,35 @@ class DaaamNode(Node):
 				_out = Path(self.orchestrator.output_dir)
 				try:
 					if getattr(self, 'enable_cosmos_hoi_processing', False):
-						rematch_hoi_outputs(_out, match_iou_threshold=self.cosmos_hoi_match_iou_threshold)
+						rematch_hoi_outputs(
+							_out,
+							match_iou_threshold=self.cosmos_hoi_match_iou_threshold,
+							semantic_reranking=self.cosmos_hoi_semantic_reranking,
+						)
 					else:
 						enrich_hoi_yaml_labels(_out)
 				except Exception as _e:
 					self.logger.error(f"[Shutdown] HOI corrections rematch/enrichment failed: {_e}")
 				if getattr(self, 'enable_cosmos_hoi_processing', False):
 					self.logger.info("[Shutdown] Running group_events...")
+					import os as _os
+					_llm_base_url = self.config.grounding.llm_base_url or "https://api.openai.com/v1"
+					_llm_api_key = _os.environ.get("OPENAI_API_KEY", "")
 					try:
 						_events_path = group_events(
 							output_dir=_out,
-							base_url=self.cosmos_hoi_base_url,
-							model=self.cosmos_hoi_model,
-							api_key=self.cosmos_hoi_api_key,
+							base_url=_llm_base_url,
+							model=self.event_grouper_model,
+							api_key=_llm_api_key,
 						)
 						if _events_path:
 							self.logger.info(f"[Shutdown] group_events wrote {_events_path}")
 							if getattr(self, 'enable_semantic_event_post_processing', True):
 								_semantic_events_path = semantic_post_process_events(
 									_out,
-									base_url=self.cosmos_hoi_base_url,
-									model=self.cosmos_hoi_model,
-									api_key=self.cosmos_hoi_api_key,
+									base_url=_llm_base_url,
+									model=self.event_grouper_model,
+									api_key=_llm_api_key,
 									output_name=self.semantic_event_output_name,
 									neighbor_window_sec=self.semantic_event_neighbor_window_sec,
 									confidence_threshold=self.semantic_event_confidence_threshold,

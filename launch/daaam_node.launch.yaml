@@ -21,8 +21,8 @@ launch:
 
   # Model configuration arguments
   - arg: {name: agent_model_name, default: 'gpt-4.1'}
-  - arg: {name: sam_model, default: 'fastsam/FastSAM-s.pt'}
-  - arg: {name: sam_model_config_path, default: 'fastsam/fastsam_config.yaml'}
+  - arg: {name: sam_model, default: ''}
+  - arg: {name: sam_model_config_path, default: ''}
   - arg: {name: sam_imgsz, default: ''}  # Empty string for auto, or '1024,1248' for TensorRT (height,width)
   - arg: {name: sentence_embedding_model, default: "sentence-transformers/sentence-t5-large"} # Qwen/Qwen3-Embedding-4B
   - arg: {name: compute_full_image_description, default: 'true'}
@@ -58,6 +58,30 @@ launch:
   # Debug and output arguments
   - arg: {name: enable_debug_output, default: 'true'}
   - arg: {name: output_dir, default: 'output'}
+  - arg: {name: output_run_prefix, default: ''}
+  - arg: {name: save_human_clips, default: 'false'}
+  - arg: {name: human_clip_detector_weights, default: 'yolo11n.pt'}
+  - arg: {name: human_clip_detector_conf, default: '0.25'}
+  - arg: {name: human_clip_detector_device, default: ''}
+  - arg: {name: human_clip_min_frames, default: '4'}
+  - arg: {name: human_clip_output_fps, default: '4.0'}
+  - arg: {name: human_clip_context_sec, default: '1.0'}
+  - arg: {name: egocentric, default: 'false'}
+  - arg: {name: enable_cosmos_hoi_processing, default: 'true'}
+  - arg: {name: cosmos_hoi_base_url, default: 'http://localhost:8010/v1'}
+  - arg: {name: cosmos_hoi_model, default: 'cosmos-reason2'}
+  - arg: {name: cosmos_hoi_api_key, default: 'EMPTY'}
+  - arg: {name: cosmos_hoi_media_root, default: ''}
+  - arg: {name: cosmos_hoi_fps, default: '4.0'}
+  - arg: {name: cosmos_hoi_enrich_pass1_location, default: 'false'}
+  - arg: {name: cosmos_hoi_match_iou_threshold, default: '0.1'}
+  - arg: {name: cosmos_hoi_streaming, default: 'false'}
+  - arg: {name: cosmos_hoi_chunk_duration, default: '6.0'}
+  - arg: {name: cosmos_hoi_chunk_overlap, default: '1.0'}
+  - arg: {name: enable_semantic_event_post_processing, default: 'true'}
+  - arg: {name: semantic_event_output_name, default: 'events_semantic.yaml'}
+  - arg: {name: semantic_event_neighbor_window_sec, default: '8.0'}
+  - arg: {name: semantic_event_confidence_threshold, default: '0.65'}
 
   # Node definition
   - node:
@@ -65,8 +89,8 @@ launch:
       exec: daaam_node.py
       name: daaam
       output: screen
-      sigterm_timeout: 60.0 # Grounding worker join (20s) + SIGINT retry (5s) + save + drain
-      sigkill_timeout: 90.0
+      sigterm_timeout: 300.0 # HOI wait (<=90s/clip x workers) + grounding join (20s) + save + drain
+      sigkill_timeout: 360.0
       param:
         # Configuration files
         - {name: pipeline_config, value: $(var pipeline_config)}
@@ -120,6 +144,30 @@ launch:
         # Debug and output
         - {name: enable_debug_output, value: $(var enable_debug_output)}
         - {name: output_dir, value: $(var output_dir)}
+        - {name: output_run_prefix, value: $(var output_run_prefix)}
+        - {name: save_human_clips, value: $(var save_human_clips)}
+        - {name: human_clip_detector_weights, value: $(var human_clip_detector_weights)}
+        - {name: human_clip_detector_conf, value: $(var human_clip_detector_conf)}
+        - {name: human_clip_detector_device, value: $(var human_clip_detector_device)}
+        - {name: human_clip_min_frames, value: $(var human_clip_min_frames)}
+        - {name: human_clip_output_fps, value: $(var human_clip_output_fps)}
+        - {name: human_clip_context_sec, value: $(var human_clip_context_sec)}
+        - {name: egocentric, value: $(var egocentric)}
+        - {name: enable_cosmos_hoi_processing, value: $(var enable_cosmos_hoi_processing)}
+        - {name: cosmos_hoi_base_url, value: $(var cosmos_hoi_base_url)}
+        - {name: cosmos_hoi_model, value: $(var cosmos_hoi_model)}
+        - {name: cosmos_hoi_api_key, value: $(var cosmos_hoi_api_key)}
+        - {name: cosmos_hoi_media_root, value: $(var cosmos_hoi_media_root)}
+        - {name: cosmos_hoi_fps, value: $(var cosmos_hoi_fps)}
+        - {name: cosmos_hoi_enrich_pass1_location, value: $(var cosmos_hoi_enrich_pass1_location)}
+        - {name: cosmos_hoi_match_iou_threshold, value: $(var cosmos_hoi_match_iou_threshold)}
+        - {name: cosmos_hoi_streaming, value: $(var cosmos_hoi_streaming)}
+        - {name: cosmos_hoi_chunk_duration, value: $(var cosmos_hoi_chunk_duration)}
+        - {name: cosmos_hoi_chunk_overlap, value: $(var cosmos_hoi_chunk_overlap)}
+        - {name: enable_semantic_event_post_processing, value: $(var enable_semantic_event_post_processing)}
+        - {name: semantic_event_output_name, value: $(var semantic_event_output_name)}
+        - {name: semantic_event_neighbor_window_sec, value: $(var semantic_event_neighbor_window_sec)}
+        - {name: semantic_event_confidence_threshold, value: $(var semantic_event_confidence_threshold)}
       remap:
         - {from: '~/rgb_image', to: $(var rgb_topic)}
         - {from: '~/depth_image', to: $(var depth_topic)}

@@ -1,0 +1,23 @@
+---
+input:
+  type: RosInput
+  tf_verbosity: 1
+  clear_queue_on_fail: true
+  tf_lookup:
+    wait_duration_s: 0.1
+    max_tries: 20
+    verbosity: 1
+  inputs:
+    left_cam:
+      receiver:
+        type: ClosedSetImageReceiver
+        # EGG is ~5 Hz. Keeping this at 0.2 s preserves the nominal frame rate
+        # while avoiding duplicate/too-fast packets if playback jitter occurs.
+        input_separation_s: 0.2
+      sensor:
+        type: camera_info
+        min_range: 0.3
+        max_range: 15.0
+        extrinsics:
+          type: ros
+          robot_frame: os1

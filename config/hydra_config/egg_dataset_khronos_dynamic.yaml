@@ -1,0 +1,153 @@
+---
+config_verbosity: 0
+paths: [khronos, hydra]
+map_window:
+  type: spatial
+  max_radius_m: 20.0
+active_window:
+  #type: ReconstructionModule
+  type: ActiveWindow
+  volumetric_map:
+    with_semantics: true
+    voxels_per_side: 16
+    voxel_size: 0.2
+    truncation_distance: 0.6
+  # tsdf:
+  #   semantic_integrator:
+  #     type: MLESemanticIntegrator
+  projective_integrator:
+    type: ProjectiveIntegrator
+    extra_integration_distance: 1.0
+    # semantic_integrator:
+    #   type: MLESemanticIntegrator
+  object_detector:
+    type: InstanceForwarding
+    min_cluster_size: 20
+    use_full_connectivity: true
+    use_3d: true
+    grid_size: 0.1
+    max_range: 20.0
+  # Experimental Khronos dynamic-object path. The default DAAAM config forwards
+  # DAAAM track IDs into ExternalTracker, which does not create dynamic tracks.
+  motion_detector:
+    type: FreeSpaceMotionDetector
+    min_cluster_size: 500
+    min_separation_distance: 2
+    num_threads: 8
+    max_range: 5.0
+  tracker:
+    type: MaxIouTracker
+    track_by: voxels
+    min_semantic_iou: 0.25
+    min_cross_iou: 0.1
+    voxel_size: 0.2
+    temporal_window: 10.0
+    min_num_observations: 8
+  tracking_integrator:
+    temporal_window: 10.0
+    num_threads: 8
+  object_extractor:
+    type: MeshObjectExtractor
+    verbosity: 1
+    min_object_allocation_confidence: 0.5
+    min_object_volume: 0.005 # m^3
+    max_object_volume: 50.0 # m^3
+    min_dynamic_displacement: 1 # m
+    only_extract_reconstructed_objects: true # used to be false
+    min_object_reconstruction_confidence: 0.5
+    min_object_reconstruction_observations: 0 # Can use higher for very noisy detections.
+    object_reconstruction_resolution: -0.02 # Positive: voxel size in meters. Negative: fraction of the extent. 0: Skip. (-0.02)
+    visualize_classification: false # For debugging.
+    projective_integrator:
+      num_threads: 8 
+frontend:
+  enable_mesh_objects: false
+  pgmo:
+    time_horizon: 15.0
+    d_graph_resolution: 2.5
+    mesh_resolution: 0.005
+  objects:
+    min_cluster_size: 40
+    cluster_tolerance: 0.25
+    bounding_box_type: OBB
+  traversability_places:
+    type: traversability
+    estimator:
+      type: HeightTraversabilityEstimator
+      height_below: 0
+      height_above: 0.5
+      min_confidence: 1.0
+      min_traversability: 1.0
+      pessimistic: true
+    clustering:
+      type: BlockTraversabilityClustering
+      min_place_width: &min_place_width 0.4 # m
+      max_place_width: &max_place_width 2.0 # m
+      recursive: true
+      simplify_boundary_traversability: true
+      # DAAAM Label Projection
+      project_labels_to_ground: true # True is probably more accurate, this gives labels more often for boundary places.
+      label_depth_tolerance: 1.0
+      label_use_const_weight: false # true: counting, false: inverse distance squared
+    sinks:
+      - type: TraversabilityVisualizer
+backend:
+  enable_node_merging: true
+  update_functors:
+    agents:
+      type: UpdateAgentsFunctor
+    objects:
+      type: UpdateObjectsFunctor
+      daaam_object_embedding_merge_threshold: 0.5 # [DAAAM LABELS]
+      merge_proposer:
+        strategy: NearestNode
+    traversability:
+      type: UpdateTraversabilityFunctor
+      min_place_size: *min_place_width # m
+      max_place_size: *max_place_width # m
+      use_metric_distance: false
+      tolerance: 0.1 # m
+    rooms:
+      type: UpdateRoomsFunctor
+      room_finder:
+        min_dilation_m: 0.5
+        max_dilation_m: 1.2
+        min_component_size: 10
+        min_room_size: 10
+        dilation_threshold_mode: PLATEAU
+        min_lifetime_length_m: 0.1
+        plateau_ratio: 0.15
+        clustering_mode: NEIGHBORS
+        dilation_diff_threshold_m: -1.0
+    buildings:
+      type: UpdateBuildingsFunctor
+    zmq_labels:
+      type: ZmqRoomLabelUpdater
+  pgmo:
+    run_mode: FULL  # kimera_pgmo run mode FULL is required
+    embed_trajectory_delta_t: 5.0
+    num_interp_pts: 3
+    interp_horizon: 10.0
+    enable_sparsify: false
+    trans_node_dist: 1.0
+    rot_node_dist: 1.2
+    optimizer:
+      type: KimeraRpgoOptimizer
+      solver: LM
+      gnc:
+        inlier_probability: 0.9
+        mu_step: 1.6
+        max_iterations: 100
+    covariance:
+      odom: 1.0e-02
+      loop_close: 5.0e-02
+      sg_loop_close: 1.0e-01
+      prior: 1.0e-02
+      mesh_mesh: 1.0e-02
+      pose_mesh: 1.0e-02
+      place_mesh: 1.0e-02
+      place_edge: 10.0
+      place_merge: 10.0
+      object_merge: 10.0
+  sinks:
+    - type: RosMetaDataListener
