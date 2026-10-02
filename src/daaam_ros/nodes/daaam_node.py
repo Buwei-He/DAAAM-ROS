@@ -1398,8 +1398,9 @@ class DaaamNode(Node):
 				llm_api_key=self.live_query_router_api_key,
 				max_iterations=self.live_query_router_max_iterations,
 				available_tools=self.live_query_router_tools,
-				# Live answers come from incomplete memory: allow "I didn't see that", and
-				# keep never-grounded static objects distinct instead of text-merged.
+				# Live answers come from incomplete memory: allow "I didn't see that".
+				# unlinked_mentions stays at the ToolConfig default (grounded_only):
+				# interactions never matched to a map object are reported, not counted.
 				# search_context stays at its "none" default: on the 39-question eval
 				# (2026-09-29) "coverage" gave no measurable accuracy or speed gain.
 				prompt_mode="live",
@@ -1409,7 +1410,6 @@ class DaaamNode(Node):
 					# the same two values from the run's pipeline_config.yaml).
 					clip_model_name=self.selectframe_clip_model_name,
 					clip_backend=self.selectframe_clip_backend,
-					unlinked_mentions="candidate_disjoint",
 					# The run's own top-level output dir, NOT human_clips/: every
 					# tool that reads events via entity_resolution.load_events()
 					# (get_entity_events, get_human_activities, get_human_atomic_
