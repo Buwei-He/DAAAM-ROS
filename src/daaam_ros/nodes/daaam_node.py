@@ -254,7 +254,9 @@ class DaaamNode(Node):
 		# models) at startup, an unverified-live code path, so it's opt-in only,
 		# never a silent fallback. Requires enable_live_hoi_query.
 		self.declare_parameter("enable_live_query_router", False)
-		self.declare_parameter("live_query_router_model", "openai/gpt-6-luna")
+		# "" = the run's grounding.agent_model_name / llm_base_url from pipeline_config,
+		# so the live router answers with the same model as scripts/eval/run_qa.py.
+		self.declare_parameter("live_query_router_model", "")
 		self.declare_parameter("live_query_router_base_url", "")
 		self.declare_parameter("live_query_router_api_key", "")
 		# Batch/offline callers (scripts/demo_query*.py) want the library default
@@ -443,6 +445,10 @@ class DaaamNode(Node):
 			
 			# Use explicit human/HOI config defaults before applying ROS overrides.
 			self._apply_human_reason_config_defaults()
+			if not self.live_query_router_model:
+				self.live_query_router_model = self.config.grounding.agent_model_name
+			if self.live_query_router_base_url is None:
+				self.live_query_router_base_url = self.config.grounding.llm_base_url
 			# override with ROS parameters
 			self._override_config_with_parameters()
 
