@@ -24,7 +24,7 @@ launch:
   - arg: {name: sam_model, default: ''}
   - arg: {name: sam_model_config_path, default: ''}
   - arg: {name: sam_imgsz, default: ''}  # Empty string for auto, or '1024,1248' for TensorRT (height,width)
-  - arg: {name: sentence_embedding_model, default: "sentence-transformers/sentence-t5-large"} # Qwen/Qwen3-Embedding-4B
+  - arg: {name: sentence_embedding_model, default: "sentence-transformers/sentence-t5-xl"} # Qwen/Qwen3-Embedding-4B
   - arg: {name: compute_full_image_description, default: 'true'}
 
   # Processing parameters
@@ -81,6 +81,22 @@ launch:
   - arg: {name: semantic_event_output_name, default: 'events_semantic.yaml'}
   - arg: {name: semantic_event_neighbor_window_sec, default: '8.0'}
   - arg: {name: semantic_event_confidence_threshold, default: '0.65'}
+
+  # live demo: rolling recent-history buffer + HTTP bridge (off by default). The
+  # mid-run rebuild of events.yaml has no switch of its own: it runs whenever
+  # defer_dsg_processing is false and Cosmos HOI is on.
+  - arg: {name: enable_live_hoi_query, default: 'false', description: rolling buffer + query bridge}
+  - arg: {name: live_buffer_sec, default: '30.0'}
+  - arg: {name: live_snapshot_keep, default: '5'}
+  - arg: {name: live_bridge_host, default: '0.0.0.0'}
+  - arg: {name: live_bridge_port, default: '8100'}
+  - arg: {name: enable_live_query_router, default: 'false', description: 'POST /ask picks dsg/interactions/events/video itself'}
+  - arg: {name: live_query_router_model, default: 'openai/gpt-6-luna'}
+  - arg: {name: live_query_router_base_url, default: ''}
+  - arg: {name: live_query_router_api_key, default: ''}
+  - arg: {name: live_query_router_max_iterations, default: '6', description: 'tool-call round-trips before forcing an answer; lower than the offline default (15) to bound live latency'}
+  - arg: {name: live_query_router_tools, default: '', description: 'comma-separated tool names to restrict /ask to; empty = all tools'}
+  - arg: {name: event_refresh_interval_sec, default: '120.0', description: 'mid-run events.yaml rebuild interval; only when defer_dsg_processing is false and Cosmos HOI is on'}
 
   # Node definition
   - node:
@@ -166,6 +182,18 @@ launch:
         - {name: semantic_event_output_name, value: $(var semantic_event_output_name)}
         - {name: semantic_event_neighbor_window_sec, value: $(var semantic_event_neighbor_window_sec)}
         - {name: semantic_event_confidence_threshold, value: $(var semantic_event_confidence_threshold)}
+        - {name: enable_live_hoi_query, value: $(var enable_live_hoi_query)}
+        - {name: live_buffer_sec, value: $(var live_buffer_sec)}
+        - {name: live_snapshot_keep, value: $(var live_snapshot_keep)}
+        - {name: live_bridge_host, value: $(var live_bridge_host)}
+        - {name: live_bridge_port, value: $(var live_bridge_port)}
+        - {name: enable_live_query_router, value: $(var enable_live_query_router)}
+        - {name: live_query_router_model, value: $(var live_query_router_model)}
+        - {name: live_query_router_base_url, value: $(var live_query_router_base_url)}
+        - {name: live_query_router_api_key, value: $(var live_query_router_api_key)}
+        - {name: live_query_router_max_iterations, value: $(var live_query_router_max_iterations)}
+        - {name: live_query_router_tools, value: $(var live_query_router_tools)}
+        - {name: event_refresh_interval_sec, value: $(var event_refresh_interval_sec)}
       remap:
         - {from: '~/rgb_image', to: $(var rgb_topic)}
         - {from: '~/depth_image', to: $(var depth_topic)}

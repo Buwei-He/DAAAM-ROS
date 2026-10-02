@@ -43,6 +43,8 @@ from daaam.human_reason.human_clip_recorder import (
 )
 from daaam.human_reason import process_clip as _hoi_process_clip
 from daaam.human_reason.live_query import LiveQueryBridge
+from daaam.scene_understanding.config import SceneUnderstandingConfig, ToolConfig
+from daaam.human_reason import RematchCache
 from daaam.human_reason import refresh_event_outputs as _refresh_event_outputs
 
 _HUMAN_REASON_PARAM_DEFAULTS = {
@@ -141,7 +143,7 @@ class DaaamNode(Node):
 		self.declare_parameter("sam_model_config_path", "")
 		# Use string parameter for sam_imgsz, will parse it to list
 		self.declare_parameter("sam_imgsz", "")  # Empty string means None/auto, e.g., "1248,1024" for TensorRT (height,width)
-		self.declare_parameter("sentence_embedding_model", "sentence-transformers/sentence-t5-large")
+		self.declare_parameter("sentence_embedding_model", "sentence-transformers/sentence-t5-xl")
 
 		# processing parameters
 		self.declare_parameter("query_interval_frames", 60)
@@ -231,10 +233,30 @@ class DaaamNode(Node):
 		# caller while it keeps holding one of the two concurrency slots.
 		self.declare_parameter("live_query_timeout_sec", 45.0)
 
-		# Periodic mid-run rebuild of events.yaml / events_semantic.yaml, which are
-		# otherwise shutdown-only artifacts. The interval arms the refresh; the next
-		# DSG update fires it. Off by default — dataset runs keep shutdown-only behaviour.
-		self.declare_parameter("enable_live_event_refresh", False)
+		# POST /ask (demo): a tool-calling agent picks the answer source itself
+		# (scene graph / interactions / events / a fresh video look) instead of the
+		# caller having to know which of the above endpoints to hit. Off by
+		# default — loads a SceneUnderstandingAgent (CLIP + sentence-embedding
+		# models) at startup, an unverified-live code path, so it's opt-in only,
+		# never a silent fallback. Requires enable_live_hoi_query.
+		self.declare_parameter("enable_live_query_router", False)
+		self.declare_parameter("live_query_router_model", "openai/gpt-6-luna")
+		self.declare_parameter("live_query_router_base_url", "")
+		self.declare_parameter("live_query_router_api_key", "")
+		# Batch/offline callers (scripts/demo_query*.py) want the library default
+		# (15 iterations, all 13 tools) since nothing there is latency-sensitive.
+		# A live spoken question is judged on round-trip time, so the router
+		# gets its own, tighter defaults instead of inheriting those: fewer
+		# iterations bounds worst-case latency, and an empty tool list (meaning
+		# "no override") is available if a demo operator later wants to curate
+		# which tools are reachable for their specific question set.
+		self.declare_parameter("live_query_router_max_iterations", 6)
+		self.declare_parameter("live_query_router_tools", "")
+
+		# Mid-run rebuild of events.yaml / events_semantic.yaml follows
+		# defer_dsg_processing: a live scene graph (false) gets live events too,
+		# rebuilt incrementally every interval; deferred (true) builds both once
+		# at shutdown, in full. Needs Cosmos HOI, which is what produces events.
 		self.declare_parameter("event_refresh_interval_sec", 120.0)
 
 	def _get_parameters(self) -> None:
@@ -348,12 +370,32 @@ class DaaamNode(Node):
 		self.live_query_timeout_sec = self.get_parameter(
 			"live_query_timeout_sec"
 		).get_parameter_value().double_value
-		self.enable_live_event_refresh = self.get_parameter(
-			"enable_live_event_refresh"
+		self.enable_live_query_router = self.get_parameter(
+			"enable_live_query_router"
 		).get_parameter_value().bool_value
+		self.live_query_router_model = self.get_parameter(
+			"live_query_router_model"
+		).get_parameter_value().string_value
+		router_base_url = self.get_parameter("live_query_router_base_url").get_parameter_value().string_value
+		self.live_query_router_base_url = router_base_url if router_base_url else None
+		router_api_key = self.get_parameter("live_query_router_api_key").get_parameter_value().string_value
+		self.live_query_router_api_key = router_api_key if router_api_key else None
+		self.live_query_router_max_iterations = self.get_parameter(
+			"live_query_router_max_iterations"
+		).get_parameter_value().integer_value
+		router_tools = self.get_parameter("live_query_router_tools").get_parameter_value().string_value
+		self.live_query_router_tools = (
+			[name.strip() for name in router_tools.split(",") if name.strip()] or None
+		)
+		self.enable_live_event_refresh = (
+			not self.defer_dsg_processing and self.enable_cosmos_hoi_processing
+		)
 		self.event_refresh_interval_sec = self.get_parameter(
 			"event_refresh_interval_sec"
 		).get_parameter_value().double_value
+		# Mid-run refreshes skip clips whose inputs are unchanged (byte-identical
+		# output, see RematchCache); the shutdown refresh redoes every clip.
+		self._rematch_cache = RematchCache()
 		self._last_event_refresh = time.time()
 		self._event_refresh_running = False
 
@@ -724,12 +766,26 @@ class DaaamNode(Node):
 		self.live_query_bridge = None
 		if self.enable_live_hoi_query:
 			self._start_live_query_bridge()
+		if self.enable_live_event_refresh:
+			self._prewarm_label_scorer()
 
 		# health monitoring timer (grounding and assignment worker health)
 		self.health_timer = self.create_timer(10.0, self.health_check_callback)
 		
 		# Timer for asynchronous DSG publishing (1 Hz is sufficient)
 		self.dsg_publish_timer = self.create_timer(1.0, self._publish_corrected_dsg_async)
+
+		# Safety-net for event refresh: _maybe_refresh_events is normally armed by
+		# this interval but fired by the next dsg_callback, so regrouping runs
+		# against just-updated corrections. If DSG updates stall (robot idle,
+		# Hydra quiet) that fire never happens even though interactions keep
+		# accumulating on disk. Its own interval/single-flight guards make it
+		# safe to also call from here — whichever trigger comes first each
+		# interval does the refresh, the other is a no-op.
+		if self.enable_live_event_refresh:
+			self.event_refresh_timer = self.create_timer(
+				self.event_refresh_interval_sec, self._maybe_refresh_events
+			)
 
 		# Publisher for semantic updates
 		self.semantic_updates_publisher = self.create_publisher(
@@ -833,11 +889,21 @@ class DaaamNode(Node):
 				try:
 					with performance_measure("human_clip_recorder", self.logger.debug, tracker):
 						track_observations = self._build_clip_track_observations(frame)
+						# Own dict, not the Frame's: width/height added here are for
+						# Rerun's Pinhole archetype, not something orchestrator.process_frame
+						# (already called above with the plain fx/fy/cx/cy shape) expects.
+						clip_camera_intrinsics = None
+						if camera_intrinsics is not None:
+							clip_camera_intrinsics = dict(camera_intrinsics)
+							clip_camera_intrinsics['width'] = int(cv_image.shape[1])
+							clip_camera_intrinsics['height'] = int(cv_image.shape[0])
 						self.human_clip_recorder.process_frame(
 							cv_image,
 							timestamp,
 							frame.frame_id,
 							track_observations,
+							camera_transform=transform,
+							camera_intrinsics=clip_camera_intrinsics,
 						)
 				except Exception as recorder_error:
 					self.logger.error(f"Human clip recording failed on frame {frame.frame_id}: {recorder_error}")
@@ -1141,11 +1207,28 @@ class DaaamNode(Node):
 		future = self._hoi_executor.submit(_run)
 		self._hoi_futures.append(future)
 
-	def _refresh_event_outputs(self) -> dict:
+	def _prewarm_label_scorer(self) -> None:
+		"""Have the refresh's embedding model loaded before the first refresh needs it.
+
+		Loading the sentence model took ~80s on CPU at the first refresh. The /ask
+		router already holds the same model (both use the default), so share it;
+		otherwise load it in the background now instead of inside the first refresh.
+		"""
+		from daaam.human_reason.label_similarity import LabelScorer
+
+		router_agent = getattr(getattr(self, "live_query_bridge", None), "router_agent", None)
+		if router_agent is not None:
+			LabelScorer.use_handler(router_agent.sentence_handler)
+			self.logger.info("Event refresh shares the /ask router's sentence-embedding model")
+			return
+		threading.Thread(target=LabelScorer.get, name="label_scorer_prewarm", daemon=True).start()
+
+	def _refresh_event_outputs(self, rematch_cache: "RematchCache | None" = None) -> dict:
 		"""Run the HOI post-processing chain against current outputs.
 
 		Shared by shutdown and the periodic mid-run refresh; every stage rewrites
-		its output from scratch, so repeated calls are safe.
+		its output from scratch, so repeated calls are safe. With rematch_cache
+		the rematch skips clips whose inputs are unchanged since the last call.
 		"""
 		from pathlib import Path as _Path
 		import os as _os
@@ -1161,18 +1244,23 @@ class DaaamNode(Node):
 			semantic_output_name=self.semantic_event_output_name,
 			neighbor_window_sec=self.semantic_event_neighbor_window_sec,
 			confidence_threshold=self.semantic_event_confidence_threshold,
+			rematch_cache=rematch_cache,
 			logger=self.logger,
 		)
 
 	def _maybe_refresh_events(self) -> None:
-		"""Timer-armed, DSG-update-fired refresh of events.yaml.
+		"""Refresh of events.yaml, fired from dsg_callback and from its own timer.
 
 		Atomic HOI interactions have to accumulate before they aggregate into
-		meaningful high-level events, so the interval arms the refresh and the
-		next DSG update actually fires it — that way the regrouping always runs
-		against a scene graph and corrections set that have just been updated.
-		Single-flighted and run off the callback thread: the chain makes an LLM
-		call and must never block DSG processing.
+		meaningful high-level events, so the interval gates how often this can
+		run. Firing from dsg_callback (when DSG updates are flowing) means the
+		regrouping usually runs against a scene graph and corrections set that
+		have just been updated; the timer is a safety net so refresh still
+		happens if DSG updates stall. The interval check and single-flight
+		guard below make both triggers safe to share: whichever comes first
+		each interval does the work, the other is a no-op. Run off the
+		callback thread either way: the chain makes an LLM call and must never
+		block DSG processing.
 		"""
 		if not self.enable_live_event_refresh:
 			return
@@ -1192,7 +1280,7 @@ class DaaamNode(Node):
 				self.orchestrator.scene_graph_service.save_corrections(
 					self.orchestrator.output_dir
 				)
-				result = self._refresh_event_outputs()
+				result = self._refresh_event_outputs(self._rematch_cache)
 				if result.get("events_path"):
 					self.logger.info(
 						f"Event refresh done in {time.time() - start_wall:.1f}s: "
@@ -1219,6 +1307,42 @@ class DaaamNode(Node):
 			self.logger.warning("Live query bridge disabled: no human clip recorder")
 			return
 
+		router_config = None
+		if self.enable_live_query_router:
+			router_config = SceneUnderstandingConfig(
+				model_name=self.live_query_router_model,
+				llm_base_url=self.live_query_router_base_url,
+				llm_api_key=self.live_query_router_api_key,
+				max_iterations=self.live_query_router_max_iterations,
+				available_tools=self.live_query_router_tools,
+				# Live answers come from incomplete memory: allow "I didn't see that", and
+				# keep never-grounded static objects distinct instead of text-merged.
+				# search_context stays at its "none" default: on the 39-question eval
+				# (2026-09-29) "coverage" gave no measurable accuracy or speed gain.
+				prompt_mode="live",
+				tool_config=ToolConfig(
+					# Embed questions with the CLIP model whose image features
+					# the scene-graph objects carry (scripts/demo_query.py reads
+					# the same two values from the run's pipeline_config.yaml).
+					clip_model_name=self.selectframe_clip_model_name,
+					clip_backend=self.selectframe_clip_backend,
+					unlinked_mentions="candidate_disjoint",
+					# The run's own top-level output dir, NOT human_clips/: every
+					# tool that reads events via entity_resolution.load_events()
+					# (get_entity_events, get_human_activities, get_human_atomic_
+					# actions, get_entity_interactions, get_entity_candidates,
+					# get_distinct_entity_count) expects hoi_output_dir to be
+					# where events.yaml itself lives, sibling to human_clips/ —
+					# pointing this at human_clips/ instead made all six of them
+					# silently return empty results for every live /ask query.
+					hoi_output_dir=str(self.orchestrator.output_dir),
+					# Loops back into the same bridge this agent lives inside —
+					# same pattern test/test_live_bridge.py already exercises.
+					live_bridge_url=f"http://127.0.0.1:{self.live_bridge_port}",
+					live_bridge_timeout_sec=self.live_query_timeout_sec,
+				),
+			)
+
 		self.live_query_bridge = LiveQueryBridge(
 			host=self.live_bridge_host,
 			port=self.live_bridge_port,
@@ -1234,11 +1358,13 @@ class DaaamNode(Node):
 			cosmos_media_root=self.cosmos_hoi_media_root,
 			query_timeout_sec=self.live_query_timeout_sec,
 			output_dir=self.orchestrator.output_dir,
+			router_config=router_config,
 		)
 		self.live_query_bridge.start()
 		self.logger.info(
 			f"Live query bridge on {self.live_bridge_host}:{self.live_bridge_port} "
-			f"(buffer={self.live_buffer_sec:.0f}s)"
+			f"(buffer={self.live_buffer_sec:.0f}s, "
+			f"router={'on/' + self.live_query_router_model if router_config else 'off'})"
 		)
 		if self.defer_dsg_processing:
 			self.logger.warning(

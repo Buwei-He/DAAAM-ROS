@@ -1,0 +1,34 @@
+---
+# Live ARI + Odin1 demo. Parallel to egg_dataset_input_config.yaml, not a
+# replacement for it: robot_frame here is the value that actually matters for
+# a live run, and it can't just override the launch arg of the same name
+# (see tools/STATE.md's "Must-knows" — extrinsics.robot_frame below is set
+# independently of the `robot_frame` launch arg, which instead flows into
+# Hydra's own robot_id/backend config). Since Odin1 is this demo's sole
+# reference frame (no second /odom to collide with), its own child frame is
+# the right value: odin1_camera_0, after ros1_stream_sender.py's ODIN1_TF_
+# CHILDREN rename (tools/stream/sender/ros1_stream_sender.py).
+input:
+  type: RosInput
+  tf_verbosity: 1
+  clear_queue_on_fail: true
+  tf_lookup:
+    wait_duration_s: 0.1
+    max_tries: 20
+    verbosity: 1
+  inputs:
+    left_cam:
+      receiver:
+        type: ClosedSetImageReceiver
+        # Odin1 over the stream sender/receiver measured ~9.0-9.2 Hz against
+        # real hardware (tools/STATE.md, 2026-09-10) -- 0.1s keeps that
+        # nominal rate without dropping frames to jitter the way EGG's
+        # dataset-specific 0.2s would.
+        input_separation_s: 0.1
+      sensor:
+        type: camera_info
+        min_range: 0.3
+        max_range: 15.0
+        extrinsics:
+          type: ros
+          robot_frame: odin1_camera_0
