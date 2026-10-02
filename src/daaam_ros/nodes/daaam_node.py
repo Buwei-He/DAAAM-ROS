@@ -42,6 +42,8 @@ from daaam.human_reason.human_clip_recorder import (
 	HumanClipRecorderConfig,
 )
 from daaam.human_reason import process_clip as _hoi_process_clip
+from daaam.human_reason.live_query import LiveQueryBridge
+from daaam.human_reason import refresh_event_outputs as _refresh_event_outputs
 
 _HUMAN_REASON_PARAM_DEFAULTS = {
 	"save_human_clips": False,
@@ -59,7 +61,6 @@ _HUMAN_REASON_PARAM_DEFAULTS = {
 	"cosmos_hoi_fps": 4.0,
 	"cosmos_hoi_match_iou_threshold": 0.1,
 	"cosmos_hoi_semantic_reranking": False,
-	"cosmos_hoi_chunk_duration_sec": 0.0,
 	"enable_semantic_event_post_processing": True,
 	"semantic_event_output_name": "events_semantic.yaml",
 	"semantic_event_neighbor_window_sec": 8.0,
@@ -196,6 +197,11 @@ class DaaamNode(Node):
 		self.declare_parameter("human_clip_detector_device", "")
 		self.declare_parameter("human_clip_min_frames", 4)
 		self.declare_parameter("human_clip_output_fps", 4.0)
+		# The one clip length. Clips are cut here with the person still in frame
+		# and reopen on the next one, so a clip is exactly what Pass 1 sees —
+		# there is no separate "chunk" any more. 8s matches the June egg runs.
+		# 0.0 leaves clips unbounded, which is what the paper recorder did.
+		self.declare_parameter("human_clip_max_clip_sec", 8.0)
 		self.declare_parameter("egocentric", False)
 		self.declare_parameter("enable_cosmos_hoi_processing", False)
 		self.declare_parameter("cosmos_hoi_base_url", "http://localhost:8000/v1")
@@ -205,12 +211,31 @@ class DaaamNode(Node):
 		self.declare_parameter("cosmos_hoi_fps", 4.0)
 		self.declare_parameter("cosmos_hoi_match_iou_threshold", 0.1)
 		self.declare_parameter("cosmos_hoi_semantic_reranking", False)
-		self.declare_parameter("cosmos_hoi_chunk_duration_sec", 0.0)
 		self.declare_parameter("enable_semantic_event_post_processing", True)
 		self.declare_parameter("semantic_event_output_name", "events_semantic.yaml")
 		self.declare_parameter("semantic_event_neighbor_window_sec", 8.0)
 		self.declare_parameter("semantic_event_confidence_threshold", 0.65)
 		self.declare_parameter("event_grouper_model", "gpt-5.4-mini")
+
+		# live HOI query (demo): reason on a rolling recent-history buffer on demand,
+		# independent of save_human_clips/enable_cosmos_hoi_processing's finalize-on-
+		# absence lifecycle. Off by default; does not affect the dataset workflows.
+		self.declare_parameter("enable_live_hoi_query", False)
+		# Whole multiple of the clip length: 5 x 8s. See the check below.
+		self.declare_parameter("live_buffer_sec", 40.0)
+		self.declare_parameter("live_snapshot_keep", 5)
+		self.declare_parameter("live_bridge_host", "0.0.0.0")
+		self.declare_parameter("live_bridge_port", 8100)
+		# Must stay below the agent's own HTTP timeout (ToolConfig.live_bridge_timeout_sec,
+		# 120s) so a slow Cosmos call fails here rather than being abandoned by the
+		# caller while it keeps holding one of the two concurrency slots.
+		self.declare_parameter("live_query_timeout_sec", 45.0)
+
+		# Periodic mid-run rebuild of events.yaml / events_semantic.yaml, which are
+		# otherwise shutdown-only artifacts. The interval arms the refresh; the next
+		# DSG update fires it. Off by default — dataset runs keep shutdown-only behaviour.
+		self.declare_parameter("enable_live_event_refresh", False)
+		self.declare_parameter("event_refresh_interval_sec", 120.0)
 
 	def _get_parameters(self) -> None:
 		"""Get parameter values."""
@@ -281,6 +306,9 @@ class DaaamNode(Node):
 		self.human_clip_detector_device = human_clip_detector_device if human_clip_detector_device else None
 		self.human_clip_min_frames = self.get_parameter("human_clip_min_frames").get_parameter_value().integer_value
 		self.human_clip_output_fps = self.get_parameter("human_clip_output_fps").get_parameter_value().double_value
+		self.human_clip_max_clip_sec = self.get_parameter(
+			"human_clip_max_clip_sec"
+		).get_parameter_value().double_value
 		self.egocentric = self.get_parameter("egocentric").get_parameter_value().bool_value
 		self.enable_cosmos_hoi_processing = self.get_parameter(
 			"enable_cosmos_hoi_processing"
@@ -298,9 +326,6 @@ class DaaamNode(Node):
 		self.cosmos_hoi_semantic_reranking = self.get_parameter(
 			"cosmos_hoi_semantic_reranking"
 		).get_parameter_value().bool_value
-		self.cosmos_hoi_chunk_duration_sec = self.get_parameter(
-			"cosmos_hoi_chunk_duration_sec"
-		).get_parameter_value().double_value
 		self.enable_semantic_event_post_processing = self.get_parameter(
 			"enable_semantic_event_post_processing"
 		).get_parameter_value().bool_value
@@ -314,6 +339,23 @@ class DaaamNode(Node):
 			"semantic_event_confidence_threshold"
 		).get_parameter_value().double_value
 		self.event_grouper_model = self.get_parameter("event_grouper_model").get_parameter_value().string_value
+
+		self.enable_live_hoi_query = self.get_parameter("enable_live_hoi_query").get_parameter_value().bool_value
+		self.live_buffer_sec = self.get_parameter("live_buffer_sec").get_parameter_value().double_value
+		self.live_snapshot_keep = self.get_parameter("live_snapshot_keep").get_parameter_value().integer_value
+		self.live_bridge_host = self.get_parameter("live_bridge_host").get_parameter_value().string_value
+		self.live_bridge_port = self.get_parameter("live_bridge_port").get_parameter_value().integer_value
+		self.live_query_timeout_sec = self.get_parameter(
+			"live_query_timeout_sec"
+		).get_parameter_value().double_value
+		self.enable_live_event_refresh = self.get_parameter(
+			"enable_live_event_refresh"
+		).get_parameter_value().bool_value
+		self.event_refresh_interval_sec = self.get_parameter(
+			"event_refresh_interval_sec"
+		).get_parameter_value().double_value
+		self._last_event_refresh = time.time()
+		self._event_refresh_running = False
 
 	def _load_pipeline_config(self) -> None:
 		"""Load and customize pipeline configuration."""
@@ -330,7 +372,6 @@ class DaaamNode(Node):
 			
 			# Use explicit human/HOI config defaults before applying ROS overrides.
 			self._apply_human_reason_config_defaults()
-
 			# override with ROS parameters
 			self._override_config_with_parameters()
 
@@ -438,7 +479,6 @@ class DaaamNode(Node):
 		self._use_config_default("cosmos_hoi_fps", cosmos_hoi.fps)
 		self._use_config_default("cosmos_hoi_match_iou_threshold", cosmos_hoi.match_iou_threshold)
 		self._use_config_default("cosmos_hoi_semantic_reranking", cosmos_hoi.semantic_reranking)
-		self._use_config_default("cosmos_hoi_chunk_duration_sec", cosmos_hoi.hoi_chunk_duration_sec)
 
 		semantic_events = human_reason.semantic_events
 		self._use_config_default("enable_semantic_event_post_processing", semantic_events.enabled)
@@ -518,7 +558,6 @@ class DaaamNode(Node):
 		self.config.human_reason.cosmos_hoi.fps = self.cosmos_hoi_fps
 		self.config.human_reason.cosmos_hoi.match_iou_threshold = self.cosmos_hoi_match_iou_threshold
 		self.config.human_reason.cosmos_hoi.semantic_reranking = self.cosmos_hoi_semantic_reranking
-		self.config.human_reason.cosmos_hoi.hoi_chunk_duration_sec = self.cosmos_hoi_chunk_duration_sec
 		self.config.human_reason.semantic_events.enabled = self.enable_semantic_event_post_processing
 		self.config.human_reason.semantic_events.output_name = self.semantic_event_output_name
 		self.config.human_reason.semantic_events.neighbor_window_sec = self.semantic_event_neighbor_window_sec
@@ -548,10 +587,14 @@ class DaaamNode(Node):
 	def _initialize_optional_recorders(self) -> None:
 		"""Initialize optional video recorders."""
 		self.human_clip_recorder = None
-		self.human_clip_recording_enabled = self.save_human_clips or self.enable_cosmos_hoi_processing
+		self.human_clip_recording_enabled = (
+			self.save_human_clips or self.enable_cosmos_hoi_processing or self.enable_live_hoi_query
+		)
 		if not self.human_clip_recording_enabled:
 			return
-		if self.enable_cosmos_hoi_processing and not self.save_human_clips:
+		if self.enable_live_hoi_query and not (self.save_human_clips or self.enable_cosmos_hoi_processing):
+			self.logger.info("Enabling human clip recording because live HOI query is active")
+		elif self.enable_cosmos_hoi_processing and not self.save_human_clips:
 			self.logger.info("Enabling human clip recording because Cosmos HOI processing is active")
 
 		recorder_config = HumanClipRecorderConfig(
@@ -561,8 +604,29 @@ class DaaamNode(Node):
 			detector_device=self.human_clip_detector_device,
 			min_clip_frames=self.human_clip_min_frames,
 			output_fps=self.human_clip_output_fps,
+			max_clip_sec=self.human_clip_max_clip_sec,
 			egocentric=self.egocentric,
+			enable_live_buffer=self.enable_live_hoi_query,
+			live_buffer_sec=self.live_buffer_sec,
+			live_snapshot_keep=self.live_snapshot_keep,
 		)
+		# The live buffer is sized in clips, not in loose seconds: at 6s clips and a
+		# 30s window it holds exactly the last 5, so "what just happened" and "what
+		# Pass 1 saw" cover the same material.
+		if self.enable_live_hoi_query and self.human_clip_max_clip_sec > 0:
+			clips = self.live_buffer_sec / self.human_clip_max_clip_sec
+			if abs(clips - round(clips)) > 1e-6:
+				self.logger.warning(
+					f"live_buffer_sec={self.live_buffer_sec:.1f} is not a whole number of "
+					f"{self.human_clip_max_clip_sec:.1f}s clips ({clips:.2f}); the newest "
+					"snapshot will straddle a clip boundary"
+				)
+			else:
+				self.logger.info(
+					f"Live buffer holds {round(clips)} x {self.human_clip_max_clip_sec:.0f}s "
+					f"clips ({self.live_buffer_sec:.0f}s)"
+				)
+
 		self.human_clip_recorder = HumanClipRecorder(
 			config=recorder_config,
 			output_dir=self.orchestrator.output_dir,
@@ -653,7 +717,14 @@ class DaaamNode(Node):
 			"~/corrected_dsg",
 			10
 		)
-		
+
+		# live HOI query (demo): HTTP surface over the rolling recent-history buffer
+		# and the latest corrected DSG, so an out-of-process scene-understanding
+		# agent can reach both without speaking ROS.
+		self.live_query_bridge = None
+		if self.enable_live_hoi_query:
+			self._start_live_query_bridge()
+
 		# health monitoring timer (grounding and assignment worker health)
 		self.health_timer = self.create_timer(10.0, self.health_check_callback)
 		
@@ -717,8 +788,12 @@ class DaaamNode(Node):
 			if transform is not None:
 				transform = np.array(transform)  # Ensure it's a numpy array
 				lin_vel, ang_vel = self._compute_frame_velocity(transform, timestamp)
+				self._tf_missing_since = None
 			else:
-				self.logger.warning("No transform available, setting velocities to zero")
+				# Rate-limited: on a robot that never publishes map->camera this
+				# fires on every frame, which at camera rate buries every other
+				# line in the log — exactly when the log is what you need.
+				self._log_missing_transform()
 				lin_vel, ang_vel = np.zeros(3), np.zeros(3)
 
 			# RGB image
@@ -824,9 +899,13 @@ class DaaamNode(Node):
 				)
 				if not success:
 					self.logger.warning("Failed to queue DSG update")
+				else:
+					# Fire a due event refresh here so regrouping runs against a
+					# just-updated graph. Returns immediately unless one is due.
+					self._maybe_refresh_events()
 			else:
 				self.logger.warning("Scene graph service not available")
-				
+
 		except Exception as e:
 			self.logger.error(f"Error in DSG callback: {e}")
 			traceback.print_exc()
@@ -1022,8 +1101,6 @@ class DaaamNode(Node):
 					track_id=track_id,
 					semantic_id=int(object_labels.get(track_id, -1)),
 					bbox_xyxy=bbox_xyxy,
-					depth_valid=bool(track.depth_valid),
-					region_area=int(getattr(track, "region_area", 0) or 0),
 					segmentation_contours=segmentation_contours,
 				)
 			)
@@ -1050,7 +1127,6 @@ class DaaamNode(Node):
 					fps=self.cosmos_hoi_fps,
 					match_iou_threshold=self.cosmos_hoi_match_iou_threshold,
 					media_root=self.cosmos_hoi_media_root,
-					hoi_chunk_duration_sec=self.cosmos_hoi_chunk_duration_sec,
 					egocentric=self.egocentric,
 				)
 				duration = time.time() - start_wall
@@ -1064,7 +1140,112 @@ class DaaamNode(Node):
 
 		future = self._hoi_executor.submit(_run)
 		self._hoi_futures.append(future)
-	
+
+	def _refresh_event_outputs(self) -> dict:
+		"""Run the HOI post-processing chain against current outputs.
+
+		Shared by shutdown and the periodic mid-run refresh; every stage rewrites
+		its output from scratch, so repeated calls are safe.
+		"""
+		from pathlib import Path as _Path
+		import os as _os
+		return _refresh_event_outputs(
+			_Path(self.orchestrator.output_dir),
+			cosmos_hoi_enabled=getattr(self, 'enable_cosmos_hoi_processing', False),
+			llm_base_url=self.config.grounding.llm_base_url or "https://api.openai.com/v1",
+			llm_model=self.event_grouper_model,
+			llm_api_key=_os.environ.get("OPENAI_API_KEY", ""),
+			match_iou_threshold=self.cosmos_hoi_match_iou_threshold,
+			semantic_reranking=self.cosmos_hoi_semantic_reranking,
+			semantic_enabled=getattr(self, 'enable_semantic_event_post_processing', True),
+			semantic_output_name=self.semantic_event_output_name,
+			neighbor_window_sec=self.semantic_event_neighbor_window_sec,
+			confidence_threshold=self.semantic_event_confidence_threshold,
+			logger=self.logger,
+		)
+
+	def _maybe_refresh_events(self) -> None:
+		"""Timer-armed, DSG-update-fired refresh of events.yaml.
+
+		Atomic HOI interactions have to accumulate before they aggregate into
+		meaningful high-level events, so the interval arms the refresh and the
+		next DSG update actually fires it — that way the regrouping always runs
+		against a scene graph and corrections set that have just been updated.
+		Single-flighted and run off the callback thread: the chain makes an LLM
+		call and must never block DSG processing.
+		"""
+		if not self.enable_live_event_refresh:
+			return
+		if self._event_refresh_running:
+			return
+		if time.time() - self._last_event_refresh < self.event_refresh_interval_sec:
+			return
+
+		self._event_refresh_running = True
+
+		def _run() -> None:
+			start_wall = time.time()
+			try:
+				# Post-processing reads labels off disk, so publish the current
+				# corrections before regrouping — without this the refresh would
+				# keep using whatever corrections.yaml existed at the last save.
+				self.orchestrator.scene_graph_service.save_corrections(
+					self.orchestrator.output_dir
+				)
+				result = self._refresh_event_outputs()
+				if result.get("events_path"):
+					self.logger.info(
+						f"Event refresh done in {time.time() - start_wall:.1f}s: "
+						f"{result['events_path']}"
+					)
+			except Exception:
+				import traceback as _tb
+				self.logger.error(f"Event refresh failed:\n{_tb.format_exc()}")
+			finally:
+				self._last_event_refresh = time.time()
+				self._event_refresh_running = False
+
+		self._hoi_executor.submit(_run)
+
+	def _start_live_query_bridge(self) -> None:
+		"""Expose the live buffer + latest corrected DSG over HTTP.
+
+		Snapshotting is cheap (the buffer is already in RAM) and the Cosmos call
+		runs on the bridge's own request thread, so the camera callback is never
+		blocked. Unlike _handle_human_clip_finalized this needs no clip to
+		finalize, so it also answers while a person stays continuously in frame.
+		"""
+		if self.human_clip_recorder is None:
+			self.logger.warning("Live query bridge disabled: no human clip recorder")
+			return
+
+		self.live_query_bridge = LiveQueryBridge(
+			host=self.live_bridge_host,
+			port=self.live_bridge_port,
+			snapshot_fn=self.human_clip_recorder.snapshot_live_buffer,
+			# Deliberately not get_latest_corrected_dsg: that one expires anything
+			# older than 2s, which is right for the 1Hz republisher and wrong for a
+			# reader answering questions about a scene the robot is standing still in.
+			dsg_fn=self.orchestrator.scene_graph_service.get_corrected_dsg_snapshot,
+			buffer_stats_fn=self.human_clip_recorder.live_buffer_stats,
+			cosmos_base_url=self.cosmos_hoi_base_url,
+			cosmos_model=self.cosmos_hoi_model,
+			cosmos_api_key=self.cosmos_hoi_api_key,
+			cosmos_media_root=self.cosmos_hoi_media_root,
+			query_timeout_sec=self.live_query_timeout_sec,
+			output_dir=self.orchestrator.output_dir,
+		)
+		self.live_query_bridge.start()
+		self.logger.info(
+			f"Live query bridge on {self.live_bridge_host}:{self.live_bridge_port} "
+			f"(buffer={self.live_buffer_sec:.0f}s)"
+		)
+		if self.defer_dsg_processing:
+			self.logger.warning(
+				"defer_dsg_processing=true: /dsg will stay empty until shutdown. "
+				"Set defer_dsg_processing:=false for live scene-graph queries."
+			)
+
 	def destroy_node(self) -> None:
 		"""Cleanup when node is destroyed."""
 		print("[Shutdown] Shutting down MMLLM Grounded SAM Node")
@@ -1077,6 +1258,9 @@ class DaaamNode(Node):
 			self.orchestrator.set_semantic_update_callback(None)
 		if hasattr(self, 'dsg_publish_timer'):
 			self.dsg_publish_timer.cancel()
+		if getattr(self, 'live_query_bridge', None) is not None:
+			print("[Shutdown] Stopping live query bridge...")
+			self.live_query_bridge.stop()
 
 		try:
 			if hasattr(self, 'human_clip_recorder') and self.human_clip_recorder is not None:
@@ -1130,57 +1314,8 @@ class DaaamNode(Node):
 
 			# corrections.yaml is now written - revalidate HOI matches before event grouping
 			if hasattr(self, 'orchestrator') and hasattr(self.orchestrator, 'output_dir'):
-				from daaam.human_reason import (
-					enrich_hoi_yaml_labels,
-					group_events,
-					rematch_hoi_outputs,
-					semantic_post_process_events,
-				)
-				from pathlib import Path
-				_out = Path(self.orchestrator.output_dir)
-				try:
-					if getattr(self, 'enable_cosmos_hoi_processing', False):
-						rematch_hoi_outputs(
-							_out,
-							match_iou_threshold=self.cosmos_hoi_match_iou_threshold,
-							semantic_reranking=self.cosmos_hoi_semantic_reranking,
-						)
-					else:
-						enrich_hoi_yaml_labels(_out)
-				except Exception as _e:
-					self.logger.error(f"[Shutdown] HOI corrections rematch/enrichment failed: {_e}")
-				if getattr(self, 'enable_cosmos_hoi_processing', False):
-					self.logger.info("[Shutdown] Running group_events...")
-					import os as _os
-					_llm_base_url = self.config.grounding.llm_base_url or "https://api.openai.com/v1"
-					_llm_api_key = _os.environ.get("OPENAI_API_KEY", "")
-					try:
-						_events_path = group_events(
-							output_dir=_out,
-							base_url=_llm_base_url,
-							model=self.event_grouper_model,
-							api_key=_llm_api_key,
-						)
-						if _events_path:
-							self.logger.info(f"[Shutdown] group_events wrote {_events_path}")
-							if getattr(self, 'enable_semantic_event_post_processing', True):
-								_semantic_events_path = semantic_post_process_events(
-									_out,
-									base_url=_llm_base_url,
-									model=self.event_grouper_model,
-									api_key=_llm_api_key,
-									output_name=self.semantic_event_output_name,
-									neighbor_window_sec=self.semantic_event_neighbor_window_sec,
-									confidence_threshold=self.semantic_event_confidence_threshold,
-								)
-								if _semantic_events_path:
-									self.logger.info(f"[Shutdown] semantic_post_process_events wrote {_semantic_events_path}")
-							else:
-								self.logger.info("[Shutdown] semantic event post-processing disabled")
-						else:
-							self.logger.warning("[Shutdown] group_events returned no output (empty interactions or Cosmos response)")
-					except Exception as _e:
-						self.logger.error(f"[Shutdown] group_events failed: {_e}")
+				self.logger.info("[Shutdown] Refreshing event outputs...")
+				self._refresh_event_outputs()
 
 			import time
 			time.sleep(1.0)  # Grace period for final log writes
@@ -1201,6 +1336,27 @@ class DaaamNode(Node):
 			traceback.print_exc()
 
 		super().destroy_node()
+
+	def _log_missing_transform(self) -> None:
+		"""Warn once when tf2 starts failing, then at most every 10s while it stays down."""
+		now = time.time()
+		since = getattr(self, "_tf_missing_since", None)
+		last = getattr(self, "_tf_missing_last_log", 0.0)
+		if since is None:
+			self._tf_missing_since = now
+			self._tf_missing_last_log = now
+			self.logger.warning(
+				f"No tf2 transform {self.world_frame} -> {self.camera_frame}; "
+				"continuing with zero velocities. Geometry-dependent outputs "
+				"(Hydra placement) will be wrong until it is published."
+			)
+			return
+		if now - last >= 10.0:
+			self._tf_missing_last_log = now
+			self.logger.warning(
+				f"Still no tf2 transform {self.world_frame} -> {self.camera_frame} "
+				f"after {now - since:.0f}s"
+			)
 
 	def _get_camera_transform_tf2(self, timestamp):
 		"""Get camera transform using tf2."""
@@ -1246,11 +1402,10 @@ class DaaamNode(Node):
 				return tf_, True
 
 			except Exception as e2:
-				self.logger.warning(f"tf2 transform lookup failed (both exact and latest): {e2}")
+				# Caller reports this to the user via _log_missing_transform(),
+				# rate-limited; logging it here too would just double the spam.
+				self.logger.debug(f"tf2 transform lookup failed (both exact and latest): {e2}")
 				return None, False
-		except Exception as e:
-			self.logger.warning(f"tf2 transform lookup failed: {e}")
-			return None, False
 	
 	def _compute_frame_velocity(self, transform: np.ndarray, timestamp: float) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
 		"""Compute linear and angular velocities from transform history."""

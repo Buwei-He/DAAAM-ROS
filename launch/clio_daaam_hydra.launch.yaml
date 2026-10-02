@@ -25,8 +25,8 @@ launch:
   - arg: {name: map_frame, default: map, description: backend scene graph frame}
 
   # configuration
-  - arg: {name: hydra_config_path, default: $(find-pkg-share daaam_ros)/config/hydra_config/clio_dataset_khronos.yaml}
-  - arg: {name: input_config_path, default: $(find-pkg-share daaam_ros)/config/hydra_ros_config/clio_dataset_input_config.yaml}
+  - arg: {name: hydra_config_path, default: $(find-pkg-share percorso_perception_ros)/config/hydra_config/clio_dataset_khronos.yaml}
+  - arg: {name: input_config_path, default: $(find-pkg-share percorso_perception_ros)/config/hydra_ros_config/clio_dataset_input_config.yaml}
   - arg: {name: lcd_config_path, default: $(find-pkg-share hydra)/config/lcd/uhumans2.yaml}
   - arg: {name: enable_lcd, default: 'false'}
   - arg: {name: bounding_box_type, default: OBB}
@@ -40,8 +40,8 @@ launch:
   - arg: {name: odom_topic, default: /dominic/forward/colmap_odom}
 
   # dataset semantics
-  - arg: {name: labelspace_path, default: $(find-pkg-share daaam_ros)/config/labels_pseudo.yaml}
-  - arg: {name: labelspace_colors, default: $(find-pkg-share daaam_ros)/config/labels_pseudo.csv} 
+  - arg: {name: labelspace_path, default: $(find-pkg-share percorso_perception_ros)/config/labels_pseudo.yaml}
+  - arg: {name: labelspace_colors, default: $(find-pkg-share percorso_perception_ros)/config/labels_pseudo.csv} 
   # - arg: {name: labelspace_path, default: $(find-pkg-share hydra)/config/label_spaces/uhumans2_$(var scene)_label_space.yaml}
   # - arg: {name: semantic_label_remap_path, default: $(find-pkg-share hydra)/config/label_remaps/uhumans2_$(var scene).yaml}
   # output
@@ -66,7 +66,7 @@ launch:
   - node: {pkg: tf2_ros, exec: static_transform_publisher, args: '--frame-id cam --child-frame-id $(var robot_frame)'}
 
   - include:
-      file: $(find-pkg-share daaam_ros)/launch/daaam_node.launch.yaml
+      file: $(find-pkg-share percorso_perception_ros)/launch/daaam_node.launch.yaml
       arg:
         # Topic configuration
         - {name: rgb_topic, value: $(var rgb_topic)}
@@ -170,7 +170,7 @@ launch:
 
   # Rerun visualizer
   - include:
-      file: $(find-pkg-share daaam_ros)/launch/rerun_visualizer_node.launch.yaml
+      file: $(find-pkg-share percorso_perception_ros)/launch/rerun_visualizer_node.launch.yaml
       arg:
         - {name: depth_info_topic, value: $(var rgb_info_topic)}
         - {name: depth_image_topic, value: $(var depth_topic)}

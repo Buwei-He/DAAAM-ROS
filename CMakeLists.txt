@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(daaam_ros)
+project(percorso_perception_ros)
 
 # Default to C++14
 if(NOT CMAKE_CXX_STANDARD)
@@ -22,11 +22,17 @@ find_package(hydra_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 
 # Install Python modules
-ament_python_install_package(${PROJECT_NAME} PACKAGE_DIR src/${PROJECT_NAME})
+# The ROS package is percorso_perception_ros; the Python module inside it stays
+# named daaam_ros. Deliberate: nothing the demo runs imports that namespace
+# (daaam_node imports the `daaam` lib, not `daaam_ros`), and renaming it would
+# move src/daaam_ros/ plus ~22 internal imports, so every paper->demo merge
+# would conflict on file paths instead of on one name.
+ament_python_install_package(daaam_ros PACKAGE_DIR src/daaam_ros)
 
 # Install Python executables
 install(PROGRAMS
   src/daaam_ros/nodes/daaam_node.py
+  src/daaam_ros/nodes/percorso_ingest_node.py
   src/daaam_ros/nodes/rerun_visualizer_node.py
   src/daaam_ros/nodes/dataloader/dataloader_node.py
   src/daaam_ros/utils/colmap_camera_info_node.py

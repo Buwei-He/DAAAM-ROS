@@ -1,5 +1,5 @@
 # Launch file for CODa dataset with provided depth images
-# Usage: ros2 launch daaam_ros dataloader_coda_with_depth.launch.yaml
+# Usage: ros2 launch percorso_perception_ros dataloader_coda_with_depth.launch.yaml
 
 launch:
   # Arguments
@@ -26,7 +26,7 @@ launch:
   
   # Bag writer node configured to use provided depth
   - node:
-      pkg: 'daaam_ros'
+      pkg: 'percorso_perception_ros'
       exec: 'dataloader_node.py'
       name: 'coda_depth_player'
       namespace: 'coda'

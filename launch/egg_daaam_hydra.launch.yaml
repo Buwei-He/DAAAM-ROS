@@ -1,6 +1,10 @@
 ---
 launch:
-  - set_parameter: {name: use_sim_time, value: 'true'}
+  # 'true' keeps every dataset launch exactly as before. A LIVE robot publishes no
+  # /clock, so a live run MUST pass use_sim_time:=false — otherwise every node's
+  # clock stays at 0 and every Hydra TF lookup fails against a frozen stamp.
+  - arg: {name: use_sim_time, default: 'true', description: set false for live sensors (no /clock publisher)}
+  - set_parameter: {name: use_sim_time, value: $(var use_sim_time)}
 
   - arg: {name: debug, default: 'false'}
   - arg: {name: verbosity, default: '0'}
@@ -21,8 +25,8 @@ launch:
   - arg: {name: odom_frame, default: world, description: odometry frame}
   - arg: {name: map_frame, default: map, description: backend scene graph frame}
 
-  - arg: {name: hydra_config_path, default: $(find-pkg-share daaam_ros)/config/hydra_config/egg_dataset_khronos_dynamic.yaml}
-  - arg: {name: input_config_path, default: $(find-pkg-share daaam_ros)/config/hydra_ros_config/egg_dataset_input_config.yaml}
+  - arg: {name: hydra_config_path, default: $(find-pkg-share percorso_perception_ros)/config/hydra_config/egg_dataset_khronos_dynamic.yaml}
+  - arg: {name: input_config_path, default: $(find-pkg-share percorso_perception_ros)/config/hydra_ros_config/egg_dataset_input_config.yaml}
   - arg: {name: lcd_config_path, default: $(find-pkg-share hydra)/config/lcd/uhumans2.yaml}
   - arg: {name: enable_lcd, default: 'false'}
   - arg: {name: bounding_box_type, default: OBB}
@@ -34,8 +38,8 @@ launch:
   - arg: {name: colored_label_topic, default: /segmentation/color/image_raw}
   - arg: {name: odom_topic, default: '/none'}
 
-  - arg: {name: labelspace_path, default: $(find-pkg-share daaam_ros)/config/labels_pseudo.yaml}
-  - arg: {name: labelspace_colors, default: $(find-pkg-share daaam_ros)/config/labels_pseudo.csv}
+  - arg: {name: labelspace_path, default: $(find-pkg-share percorso_perception_ros)/config/labels_pseudo.yaml}
+  - arg: {name: labelspace_colors, default: $(find-pkg-share percorso_perception_ros)/config/labels_pseudo.csv}
 
   - arg: {name: query_interval_frames, default: '120'}
   - arg: {name: min_obs_per_track, default: '8'}
@@ -67,6 +71,7 @@ launch:
   - arg: {name: human_clip_detector_conf, default: '0.25'}
   - arg: {name: human_clip_detector_device, default: ''}
   - arg: {name: human_clip_min_frames, default: '4'}
+  - arg: {name: human_clip_max_clip_sec, default: '8.0'}
   - arg: {name: human_clip_output_fps, default: '4.0'}
   - arg: {name: human_clip_context_sec, default: '1.0'}
   - arg: {name: enable_cosmos_hoi_processing, default: 'false'}
@@ -78,17 +83,25 @@ launch:
   - arg: {name: cosmos_hoi_enrich_pass1_location, default: 'false'}
   - arg: {name: cosmos_hoi_match_iou_threshold, default: '0.1'}
   - arg: {name: cosmos_hoi_streaming, default: 'false'}
-  - arg: {name: cosmos_hoi_chunk_duration, default: '6.0'}
-  - arg: {name: cosmos_hoi_chunk_overlap, default: '1.0'}
   - arg: {name: enable_semantic_event_post_processing, default: 'true'}
   - arg: {name: semantic_event_output_name, default: 'events_semantic.yaml'}
   - arg: {name: semantic_event_neighbor_window_sec, default: '8.0'}
   - arg: {name: semantic_event_confidence_threshold, default: '0.65'}
 
+  # live demo: rolling recent-history buffer + HTTP bridge, and mid-run rebuild of
+  # events.yaml. All off by default so dataset runs behave exactly as before.
+  - arg: {name: enable_live_hoi_query, default: 'false', description: rolling buffer + query bridge}
+  - arg: {name: live_buffer_sec, default: '30.0'}
+  - arg: {name: live_snapshot_keep, default: '5'}
+  - arg: {name: live_bridge_host, default: '0.0.0.0'}
+  - arg: {name: live_bridge_port, default: '8100'}
+  - arg: {name: enable_live_event_refresh, default: 'false', description: rebuild events.yaml mid-run}
+  - arg: {name: event_refresh_interval_sec, default: '120.0'}
+
   - set_remap: {from: hydra_visualizer/dsg, to: hydra/backend/dsg}
 
   - include:
-      file: $(find-pkg-share daaam_ros)/launch/daaam_node.launch.yaml
+      file: $(find-pkg-share percorso_perception_ros)/launch/daaam_node.launch.yaml
       arg:
         - {name: rgb_topic, value: $(var rgb_topic)}
         - {name: depth_topic, value: $(var depth_topic)}
@@ -146,6 +159,7 @@ launch:
         - {name: human_clip_detector_conf, value: $(var human_clip_detector_conf)}
         - {name: human_clip_detector_device, value: $(var human_clip_detector_device)}
         - {name: human_clip_min_frames, value: $(var human_clip_min_frames)}
+        - {name: human_clip_max_clip_sec, value: $(var human_clip_max_clip_sec)}
         - {name: human_clip_output_fps, value: $(var human_clip_output_fps)}
         - {name: human_clip_context_sec, value: $(var human_clip_context_sec)}
         - {name: egocentric, value: $(var egocentric)}
@@ -158,12 +172,17 @@ launch:
         - {name: cosmos_hoi_enrich_pass1_location, value: $(var cosmos_hoi_enrich_pass1_location)}
         - {name: cosmos_hoi_match_iou_threshold, value: $(var cosmos_hoi_match_iou_threshold)}
         - {name: cosmos_hoi_streaming, value: $(var cosmos_hoi_streaming)}
-        - {name: cosmos_hoi_chunk_duration, value: $(var cosmos_hoi_chunk_duration)}
-        - {name: cosmos_hoi_chunk_overlap, value: $(var cosmos_hoi_chunk_overlap)}
         - {name: enable_semantic_event_post_processing, value: $(var enable_semantic_event_post_processing)}
         - {name: semantic_event_output_name, value: $(var semantic_event_output_name)}
         - {name: semantic_event_neighbor_window_sec, value: $(var semantic_event_neighbor_window_sec)}
         - {name: semantic_event_confidence_threshold, value: $(var semantic_event_confidence_threshold)}
+        - {name: enable_live_hoi_query, value: $(var enable_live_hoi_query)}
+        - {name: live_buffer_sec, value: $(var live_buffer_sec)}
+        - {name: live_snapshot_keep, value: $(var live_snapshot_keep)}
+        - {name: live_bridge_host, value: $(var live_bridge_host)}
+        - {name: live_bridge_port, value: $(var live_bridge_port)}
+        - {name: enable_live_event_refresh, value: $(var enable_live_event_refresh)}
+        - {name: event_refresh_interval_sec, value: $(var event_refresh_interval_sec)}
 
   - set_remap: {from: /hydra/meta_data_in, to: /daaam_node/semantic_updates}
 

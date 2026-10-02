@@ -5,7 +5,7 @@ launch:
   - arg: { name: data_dir, default: "/path/to/data/dir/" }
   - arg: { name: src_dsg, default: "$(var data_dir)/dsg_updated.json" }
   - arg: { name: save_dsg, default: "$(var data_dir)/clustered_dsg.json" }
-  - arg: { name: cluster_places_config_path, default: "$(find-pkg-share daaam_ros)/config/cluster_places_config_coda.yaml" }
+  - arg: { name: cluster_places_config_path, default: "$(find-pkg-share percorso_perception_ros)/config/cluster_places_config_coda.yaml" }
 
   - node: {pkg: tf2_ros, exec: static_transform_publisher, args: '--frame-id world --child-frame-id map'}
 
@@ -29,11 +29,11 @@ launch:
         - { name: visualizer_frame, value: world }
         - {
             name: rviz_path,
-            value: "$(find-pkg-share daaam_ros)/config/rviz/cluster_places.rviz",
+            value: "$(find-pkg-share percorso_perception_ros)/config/rviz/cluster_places.rviz",
           }
         - {
             name: visualizer_config_path,
-            value: "$(find-pkg-share daaam_ros)/config/cluster_places_visualizer_config.yaml",
+            value: "$(find-pkg-share percorso_perception_ros)/config/cluster_places_visualizer_config.yaml",
           }
 
   # GUI

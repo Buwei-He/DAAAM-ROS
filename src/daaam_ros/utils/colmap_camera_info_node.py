@@ -38,7 +38,7 @@ class ColmapCameraInfoProcessor(Node):
         if not self.colmap_cameras_path or not self.input_bag_path:
             self.get_logger().error("Missing required parameters")
             example_usage = """
-            Usage: ros2 run daaam_ros colmap_camera_info_node 
+            Usage: ros2 run percorso_perception_ros colmap_camera_info_node 
                 --ros-args 
                 -p colmap_cameras_path:=<path>
                 -p input_bag_path:=<path>

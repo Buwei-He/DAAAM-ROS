@@ -1,11 +1,11 @@
 # ROS2 launch file for the Bag Writer Node
-# Usage: ros2 launch daaam_ros dataloader.launch.yaml
+# Usage: ros2 launch percorso_perception_ros dataloader.launch.yaml
 
 launch:
   # Configuration arguments that can be overridden
   - arg:
       name: 'config_file'
-      default: '$(find-pkg-share daaam_ros)/config/dataloader_config.yaml'
+      default: '$(find-pkg-share percorso_perception_ros)/config/dataloader_config.yaml'
       description: 'Path to configuration file'
   
   - arg:
@@ -55,7 +55,7 @@ launch:
 
   # Bag writer node
   - node:
-      pkg: 'daaam_ros'
+      pkg: 'percorso_perception_ros'
       exec: 'dataloader_node.py'
       name: 'bag_writer_node'
       namespace: $(var namespace)

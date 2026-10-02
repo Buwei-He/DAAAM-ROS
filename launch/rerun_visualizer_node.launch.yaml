@@ -14,7 +14,7 @@ launch:
   - arg: {name: depth_scale, default: '1000.0'}
   - arg: {name: log_depth, default: 'false'}
   - arg: {name: log_object_meshes, default: 'false'}
-  - arg: {name: labelspace_colors, default: $(find-pkg-share daaam_ros)/config/labels_pseudo.csv}
+  - arg: {name: labelspace_colors, default: $(find-pkg-share percorso_perception_ros)/config/labels_pseudo.csv}
   # tf2 frame parameters
   - arg: {name: use_tf2, default: 'true'}
   - arg: {name: world_frame, default: 'map'}
@@ -31,7 +31,7 @@ launch:
 
   # node definition
   - node:
-      pkg: daaam_ros
+      pkg: percorso_perception_ros
       exec: rerun_visualizer_node.py
       name: rerun_visualizer
       output: screen

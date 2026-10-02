@@ -16,8 +16,8 @@ launch:
 
   # Configuration file arguments
   - arg: {name: pipeline_config, default: 'config/pipeline_config.yaml'}
-  - arg: {name: semantic_config, default: $(find-pkg-share daaam_ros)/config/labels_pseudo.yaml}
-  - arg: {name: labelspace_colors, default: $(find-pkg-share daaam_ros)/config/labels_pseudo.csv}
+  - arg: {name: semantic_config, default: $(find-pkg-share percorso_perception_ros)/config/labels_pseudo.yaml}
+  - arg: {name: labelspace_colors, default: $(find-pkg-share percorso_perception_ros)/config/labels_pseudo.csv}
 
   # Model configuration arguments
   - arg: {name: agent_model_name, default: 'gpt-4.1'}
@@ -64,6 +64,7 @@ launch:
   - arg: {name: human_clip_detector_conf, default: '0.25'}
   - arg: {name: human_clip_detector_device, default: ''}
   - arg: {name: human_clip_min_frames, default: '4'}
+  - arg: {name: human_clip_max_clip_sec, default: '8.0'}
   - arg: {name: human_clip_output_fps, default: '4.0'}
   - arg: {name: human_clip_context_sec, default: '1.0'}
   - arg: {name: egocentric, default: 'false'}
@@ -76,8 +77,6 @@ launch:
   - arg: {name: cosmos_hoi_enrich_pass1_location, default: 'false'}
   - arg: {name: cosmos_hoi_match_iou_threshold, default: '0.1'}
   - arg: {name: cosmos_hoi_streaming, default: 'false'}
-  - arg: {name: cosmos_hoi_chunk_duration, default: '6.0'}
-  - arg: {name: cosmos_hoi_chunk_overlap, default: '1.0'}
   - arg: {name: enable_semantic_event_post_processing, default: 'true'}
   - arg: {name: semantic_event_output_name, default: 'events_semantic.yaml'}
   - arg: {name: semantic_event_neighbor_window_sec, default: '8.0'}
@@ -85,7 +84,7 @@ launch:
 
   # Node definition
   - node:
-      pkg: daaam_ros
+      pkg: percorso_perception_ros
       exec: daaam_node.py
       name: daaam
       output: screen
@@ -150,6 +149,7 @@ launch:
         - {name: human_clip_detector_conf, value: $(var human_clip_detector_conf)}
         - {name: human_clip_detector_device, value: $(var human_clip_detector_device)}
         - {name: human_clip_min_frames, value: $(var human_clip_min_frames)}
+        - {name: human_clip_max_clip_sec, value: $(var human_clip_max_clip_sec)}
         - {name: human_clip_output_fps, value: $(var human_clip_output_fps)}
         - {name: human_clip_context_sec, value: $(var human_clip_context_sec)}
         - {name: egocentric, value: $(var egocentric)}
@@ -162,8 +162,6 @@ launch:
         - {name: cosmos_hoi_enrich_pass1_location, value: $(var cosmos_hoi_enrich_pass1_location)}
         - {name: cosmos_hoi_match_iou_threshold, value: $(var cosmos_hoi_match_iou_threshold)}
         - {name: cosmos_hoi_streaming, value: $(var cosmos_hoi_streaming)}
-        - {name: cosmos_hoi_chunk_duration, value: $(var cosmos_hoi_chunk_duration)}
-        - {name: cosmos_hoi_chunk_overlap, value: $(var cosmos_hoi_chunk_overlap)}
         - {name: enable_semantic_event_post_processing, value: $(var enable_semantic_event_post_processing)}
         - {name: semantic_event_output_name, value: $(var semantic_event_output_name)}
         - {name: semantic_event_neighbor_window_sec, value: $(var semantic_event_neighbor_window_sec)}
