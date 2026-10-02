@@ -22,13 +22,11 @@ from pathlib import Path
 from datetime import datetime 
 import traceback
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 import time
 from tf2_ros import TransformListener, Buffer
 from typing import Tuple, Optional
 import signal
-import subprocess
-
 
 from daaam.pipeline import PipelineOrchestrator, PipelineConfig
 from daaam.pipeline.models import Frame
@@ -37,6 +35,37 @@ from daaam.utils.performance import performance_measure, time_execution_sync
 from daaam.utils.vision import BoundingBox
 from daaam.utils.transform import compute_ema_velocity
 from daaam import ROOT_DIR
+from daaam.human_reason.human_clip_recorder import (
+	ClipTrackObservation,
+	HumanClipArtifact,
+	HumanClipRecorder,
+	HumanClipRecorderConfig,
+)
+from daaam.human_reason import process_clip as _hoi_process_clip
+
+_HUMAN_REASON_PARAM_DEFAULTS = {
+	"save_human_clips": False,
+	"human_clip_detector_weights": "yolo11n.pt",
+	"human_clip_detector_conf": 0.25,
+	"human_clip_detector_device": None,
+	"human_clip_min_frames": 4,
+	"human_clip_output_fps": 4.0,
+	"egocentric": False,
+	"enable_cosmos_hoi_processing": False,
+	"cosmos_hoi_base_url": "http://localhost:8000/v1",
+	"cosmos_hoi_model": "cosmos-reason2",
+	"cosmos_hoi_api_key": "EMPTY",
+	"cosmos_hoi_media_root": "",
+	"cosmos_hoi_fps": 4.0,
+	"cosmos_hoi_match_iou_threshold": 0.1,
+	"cosmos_hoi_semantic_reranking": False,
+	"cosmos_hoi_chunk_duration_sec": 0.0,
+	"enable_semantic_event_post_processing": True,
+	"semantic_event_output_name": "events_semantic.yaml",
+	"semantic_event_neighbor_window_sec": 8.0,
+	"semantic_event_confidence_threshold": 0.65,
+	"event_grouper_model": "gpt-5.4-mini",
+}
 
 class DaaamNode(Node):
 	"""
@@ -74,6 +103,7 @@ class DaaamNode(Node):
 
 		# Initialize pipeline orchestrator with self.config
 		self._initialize_pipeline()
+		self._initialize_optional_recorders()
 
 		self._initialize_ros_components()
 		
@@ -105,9 +135,9 @@ class DaaamNode(Node):
 		self.declare_parameter("semantic_config", "config/labels_pseudo.yaml")
 		self.declare_parameter("labelspace_colors", "config/labels_pseudo.csv")
 		
-		# model params
-		self.declare_parameter("sam_model", "fastsam/FastSAM-s.pt")
-		self.declare_parameter("sam_model_config_path", "fastsam/fastsam_config.yaml")
+		# model params - empty string means "use pipeline_config.yaml value"
+		self.declare_parameter("sam_model", "")
+		self.declare_parameter("sam_model_config_path", "")
 		# Use string parameter for sam_imgsz, will parse it to list
 		self.declare_parameter("sam_imgsz", "")  # Empty string means None/auto, e.g., "1248,1024" for TensorRT (height,width)
 		self.declare_parameter("sentence_embedding_model", "sentence-transformers/sentence-t5-large")
@@ -159,6 +189,28 @@ class DaaamNode(Node):
 		# debug and output
 		self.declare_parameter("enable_debug_output", True)
 		self.declare_parameter("output_dir", "output")
+		self.declare_parameter("output_run_prefix", "")
+		self.declare_parameter("save_human_clips", False)
+		self.declare_parameter("human_clip_detector_weights", "yolo11n.pt")
+		self.declare_parameter("human_clip_detector_conf", 0.25)
+		self.declare_parameter("human_clip_detector_device", "")
+		self.declare_parameter("human_clip_min_frames", 4)
+		self.declare_parameter("human_clip_output_fps", 4.0)
+		self.declare_parameter("egocentric", False)
+		self.declare_parameter("enable_cosmos_hoi_processing", False)
+		self.declare_parameter("cosmos_hoi_base_url", "http://localhost:8000/v1")
+		self.declare_parameter("cosmos_hoi_model", "cosmos-reason2")
+		self.declare_parameter("cosmos_hoi_api_key", "EMPTY")
+		self.declare_parameter("cosmos_hoi_media_root", "")
+		self.declare_parameter("cosmos_hoi_fps", 4.0)
+		self.declare_parameter("cosmos_hoi_match_iou_threshold", 0.1)
+		self.declare_parameter("cosmos_hoi_semantic_reranking", False)
+		self.declare_parameter("cosmos_hoi_chunk_duration_sec", 0.0)
+		self.declare_parameter("enable_semantic_event_post_processing", True)
+		self.declare_parameter("semantic_event_output_name", "events_semantic.yaml")
+		self.declare_parameter("semantic_event_neighbor_window_sec", 8.0)
+		self.declare_parameter("semantic_event_confidence_threshold", 0.65)
+		self.declare_parameter("event_grouper_model", "gpt-5.4-mini")
 
 	def _get_parameters(self) -> None:
 		"""Get parameter values."""
@@ -221,6 +273,47 @@ class DaaamNode(Node):
 		# debug
 		self.enable_debug_output = self.get_parameter("enable_debug_output").get_parameter_value().bool_value
 		self.output_dir = Path(self.get_parameter("output_dir").get_parameter_value().string_value)
+		self.output_run_prefix = self.get_parameter("output_run_prefix").get_parameter_value().string_value
+		self.save_human_clips = self.get_parameter("save_human_clips").get_parameter_value().bool_value
+		self.human_clip_detector_weights = self.get_parameter("human_clip_detector_weights").get_parameter_value().string_value
+		self.human_clip_detector_conf = self.get_parameter("human_clip_detector_conf").get_parameter_value().double_value
+		human_clip_detector_device = self.get_parameter("human_clip_detector_device").get_parameter_value().string_value
+		self.human_clip_detector_device = human_clip_detector_device if human_clip_detector_device else None
+		self.human_clip_min_frames = self.get_parameter("human_clip_min_frames").get_parameter_value().integer_value
+		self.human_clip_output_fps = self.get_parameter("human_clip_output_fps").get_parameter_value().double_value
+		self.egocentric = self.get_parameter("egocentric").get_parameter_value().bool_value
+		self.enable_cosmos_hoi_processing = self.get_parameter(
+			"enable_cosmos_hoi_processing"
+		).get_parameter_value().bool_value
+		self.cosmos_hoi_base_url = self.get_parameter("cosmos_hoi_base_url").get_parameter_value().string_value
+		self.cosmos_hoi_model = self.get_parameter("cosmos_hoi_model").get_parameter_value().string_value
+		self.cosmos_hoi_api_key = self.get_parameter("cosmos_hoi_api_key").get_parameter_value().string_value
+		if self.enable_cosmos_hoi_processing:
+			self.logger.info(f"Cosmos HOI: url={self.cosmos_hoi_base_url} model={self.cosmos_hoi_model}")
+		self.cosmos_hoi_media_root = self.get_parameter("cosmos_hoi_media_root").get_parameter_value().string_value
+		self.cosmos_hoi_fps = self.get_parameter("cosmos_hoi_fps").get_parameter_value().double_value
+		self.cosmos_hoi_match_iou_threshold = self.get_parameter(
+			"cosmos_hoi_match_iou_threshold"
+		).get_parameter_value().double_value
+		self.cosmos_hoi_semantic_reranking = self.get_parameter(
+			"cosmos_hoi_semantic_reranking"
+		).get_parameter_value().bool_value
+		self.cosmos_hoi_chunk_duration_sec = self.get_parameter(
+			"cosmos_hoi_chunk_duration_sec"
+		).get_parameter_value().double_value
+		self.enable_semantic_event_post_processing = self.get_parameter(
+			"enable_semantic_event_post_processing"
+		).get_parameter_value().bool_value
+		self.semantic_event_output_name = self.get_parameter(
+			"semantic_event_output_name"
+		).get_parameter_value().string_value
+		self.semantic_event_neighbor_window_sec = self.get_parameter(
+			"semantic_event_neighbor_window_sec"
+		).get_parameter_value().double_value
+		self.semantic_event_confidence_threshold = self.get_parameter(
+			"semantic_event_confidence_threshold"
+		).get_parameter_value().double_value
+		self.event_grouper_model = self.get_parameter("event_grouper_model").get_parameter_value().string_value
 
 	def _load_pipeline_config(self) -> None:
 		"""Load and customize pipeline configuration."""
@@ -235,6 +328,9 @@ class DaaamNode(Node):
 				self.logger.warning(f"Pipeline config file not found: {config_path}, creating from parameters")
 				self.config = self._create_config_from_parameters()
 			
+			# Use explicit human/HOI config defaults before applying ROS overrides.
+			self._apply_human_reason_config_defaults()
+
 			# override with ROS parameters
 			self._override_config_with_parameters()
 
@@ -246,8 +342,9 @@ class DaaamNode(Node):
 	def _create_config_from_parameters(self) -> PipelineConfig:
 		"""Create pipeline configuration from ROS parameters."""
 		from daaam.config import (
-			SegmentationConfig, TrackingConfig, GroundingConfig, 
-			WorkerConfig, DepthConfig, SceneGraphConfig
+			SegmentationConfig, TrackingConfig, GroundingConfig,
+			WorkerConfig, DepthConfig, SceneGraphConfig,
+			HumanReasonConfig, HumanClipConfig, CosmosHOIConfig, SemanticEventConfig,
 		)
 		
 		return PipelineConfig(
@@ -281,15 +378,81 @@ class DaaamNode(Node):
 			scene_graph=SceneGraphConfig(
 				defer_dsg_processing=self.defer_dsg_processing
 			),
+			human_reason=HumanReasonConfig(
+				human_clips=HumanClipConfig(
+					enabled=self.save_human_clips,
+					detector_weights=self.human_clip_detector_weights,
+					detector_conf=self.human_clip_detector_conf,
+					detector_device=self.human_clip_detector_device,
+					min_frames=self.human_clip_min_frames,
+					output_fps=self.human_clip_output_fps,
+				),
+				cosmos_hoi=CosmosHOIConfig(
+					enabled=self.enable_cosmos_hoi_processing,
+					base_url=self.cosmos_hoi_base_url,
+					model=self.cosmos_hoi_model,
+					api_key=self.cosmos_hoi_api_key,
+					media_root=self.cosmos_hoi_media_root,
+					fps=self.cosmos_hoi_fps,
+					match_iou_threshold=self.cosmos_hoi_match_iou_threshold,
+				),
+				semantic_events=SemanticEventConfig(
+					enabled=self.enable_semantic_event_post_processing,
+					output_name=self.semantic_event_output_name,
+					neighbor_window_sec=self.semantic_event_neighbor_window_sec,
+					confidence_threshold=self.semantic_event_confidence_threshold,
+				),
+			),
 			semantic_config_path=self.semantic_config_path,
 			labelspace_colors_path=self.labelspace_colors_path,
-			output_dir=str(self.output_dir)
+			output_dir=str(self.output_dir),
+			output_run_prefix=str(self.output_run_prefix)
 		)
+
+	def _use_config_default(self, attr_name: str, config_value) -> None:
+		if getattr(self, attr_name) == _HUMAN_REASON_PARAM_DEFAULTS[attr_name]:
+			setattr(self, attr_name, config_value)
+
+	def _apply_human_reason_config_defaults(self) -> None:
+		"""Use pipeline_config human_reason values unless ROS params override them."""
+		human_reason = getattr(self.config, "human_reason", None)
+		if human_reason is None:
+			return
+
+		self._use_config_default("egocentric", human_reason.egocentric)
+
+		human_clips = human_reason.human_clips
+		self._use_config_default("save_human_clips", human_clips.enabled)
+		self._use_config_default("human_clip_detector_weights", human_clips.detector_weights)
+		self._use_config_default("human_clip_detector_conf", human_clips.detector_conf)
+		self._use_config_default("human_clip_detector_device", human_clips.detector_device)
+		self._use_config_default("human_clip_min_frames", human_clips.min_frames)
+		self._use_config_default("human_clip_output_fps", human_clips.output_fps)
+
+		cosmos_hoi = human_reason.cosmos_hoi
+		self._use_config_default("enable_cosmos_hoi_processing", cosmos_hoi.enabled)
+		self._use_config_default("cosmos_hoi_base_url", cosmos_hoi.base_url)
+		self._use_config_default("cosmos_hoi_model", cosmos_hoi.model)
+		self._use_config_default("cosmos_hoi_api_key", cosmos_hoi.api_key)
+		self._use_config_default("cosmos_hoi_media_root", cosmos_hoi.media_root)
+		self._use_config_default("cosmos_hoi_fps", cosmos_hoi.fps)
+		self._use_config_default("cosmos_hoi_match_iou_threshold", cosmos_hoi.match_iou_threshold)
+		self._use_config_default("cosmos_hoi_semantic_reranking", cosmos_hoi.semantic_reranking)
+		self._use_config_default("cosmos_hoi_chunk_duration_sec", cosmos_hoi.hoi_chunk_duration_sec)
+
+		semantic_events = human_reason.semantic_events
+		self._use_config_default("enable_semantic_event_post_processing", semantic_events.enabled)
+		self._use_config_default("semantic_event_output_name", semantic_events.output_name)
+		self._use_config_default("semantic_event_neighbor_window_sec", semantic_events.neighbor_window_sec)
+		self._use_config_default("semantic_event_confidence_threshold", semantic_events.confidence_threshold)
+		self._use_config_default("event_grouper_model", semantic_events.event_grouper_model)
 
 	def _override_config_with_parameters(self) -> None:
 		"""Override configuration with ROS parameters."""
-		self.config.segmentation.model_name = self.sam_model
-		self.config.segmentation.model_config_path = self.sam_model_config_path
+		if self.sam_model:
+			self.config.segmentation.model_name = self.sam_model
+		if self.sam_model_config_path:
+			self.config.segmentation.model_config_path = self.sam_model_config_path
 		self.config.segmentation.min_mask_region_area = self.min_mask_region_area
 		self.config.segmentation.polygon_epsilon_factor = self.polygon_epsilon_factor
 		# Set imgsz if provided (for TensorRT models)
@@ -311,6 +474,7 @@ class DaaamNode(Node):
 		self.config.semantic_config_path = self.semantic_config_path
 		self.config.labelspace_colors_path = self.labelspace_colors_path
 		self.config.output_dir = str(self.output_dir)
+		self.config.output_run_prefix = str(self.output_run_prefix)
 		
 		self.config.log_dir = self.log_dir
 		
@@ -338,6 +502,28 @@ class DaaamNode(Node):
 		self.logger.info(f"Set selectframe_clip_backend to {self.selectframe_clip_backend}")
 		self.logger.info(f"Set selectframe_clip_model_name to {self.selectframe_clip_model_name}")
 
+		# Human reasoning config
+		self.config.human_reason.human_clips.enabled = self.save_human_clips
+		self.config.human_reason.human_clips.detector_weights = self.human_clip_detector_weights
+		self.config.human_reason.human_clips.detector_conf = self.human_clip_detector_conf
+		self.config.human_reason.human_clips.detector_device = self.human_clip_detector_device
+		self.config.human_reason.human_clips.min_frames = self.human_clip_min_frames
+		self.config.human_reason.human_clips.output_fps = self.human_clip_output_fps
+		self.config.human_reason.egocentric = self.egocentric
+		self.config.human_reason.cosmos_hoi.enabled = self.enable_cosmos_hoi_processing
+		self.config.human_reason.cosmos_hoi.base_url = self.cosmos_hoi_base_url
+		self.config.human_reason.cosmos_hoi.model = self.cosmos_hoi_model
+		self.config.human_reason.cosmos_hoi.api_key = self.cosmos_hoi_api_key
+		self.config.human_reason.cosmos_hoi.media_root = self.cosmos_hoi_media_root
+		self.config.human_reason.cosmos_hoi.fps = self.cosmos_hoi_fps
+		self.config.human_reason.cosmos_hoi.match_iou_threshold = self.cosmos_hoi_match_iou_threshold
+		self.config.human_reason.cosmos_hoi.semantic_reranking = self.cosmos_hoi_semantic_reranking
+		self.config.human_reason.cosmos_hoi.hoi_chunk_duration_sec = self.cosmos_hoi_chunk_duration_sec
+		self.config.human_reason.semantic_events.enabled = self.enable_semantic_event_post_processing
+		self.config.human_reason.semantic_events.output_name = self.semantic_event_output_name
+		self.config.human_reason.semantic_events.neighbor_window_sec = self.semantic_event_neighbor_window_sec
+		self.config.human_reason.semantic_events.confidence_threshold = self.semantic_event_confidence_threshold
+
 		self.config.scene_graph.defer_dsg_processing = self.defer_dsg_processing
 		self.logger.info(f"Set defer_dsg_processing to {self.defer_dsg_processing}")
 
@@ -359,14 +545,56 @@ class DaaamNode(Node):
 			self.logger.error(f"Failed to initialize pipeline orchestrator: {e}")
 			raise
 
+	def _initialize_optional_recorders(self) -> None:
+		"""Initialize optional video recorders."""
+		self.human_clip_recorder = None
+		self.human_clip_recording_enabled = self.save_human_clips or self.enable_cosmos_hoi_processing
+		if not self.human_clip_recording_enabled:
+			return
+		if self.enable_cosmos_hoi_processing and not self.save_human_clips:
+			self.logger.info("Enabling human clip recording because Cosmos HOI processing is active")
+
+		recorder_config = HumanClipRecorderConfig(
+			enabled=self.human_clip_recording_enabled,
+			detector_weights=self.human_clip_detector_weights,
+			detector_conf=self.human_clip_detector_conf,
+			detector_device=self.human_clip_detector_device,
+			min_clip_frames=self.human_clip_min_frames,
+			output_fps=self.human_clip_output_fps,
+			egocentric=self.egocentric,
+		)
+		self.human_clip_recorder = HumanClipRecorder(
+			config=recorder_config,
+			output_dir=self.orchestrator.output_dir,
+			logger=self.logger,
+			on_clip_finalized=self._handle_human_clip_finalized,
+		)
+
 	def _initialize_ros_components(self) -> None:
 		"""Initialize ROS publishers, subscribers, and other components."""
 		# msg -> img
 		self.bridge = CvBridge()
 		
-		# state vars 
+		# state vars
 		self.latest_camera_info = None
 		self.processing_lock = threading.Lock()
+		# Executor for HOI background tasks. Shutdown gives these tasks a
+		# bounded grace period after the core DAAAM outputs are saved.
+		from concurrent.futures import ThreadPoolExecutor as _TPE
+		self._hoi_executor = _TPE(max_workers=4, thread_name_prefix="cosmos_hoi")
+		self._hoi_futures = []
+		self._runtime_stats = {
+			"start_wall": time.time(),
+			"last_health_wall": time.time(),
+			"last_health_frame_count": 0,
+			"callback_count": 0,
+			"callback_wall_ms": deque(maxlen=300),
+			"callback_wall_period_ms": deque(maxlen=300),
+			"source_period_ms": deque(maxlen=300),
+			"source_to_wall_age_sec": deque(maxlen=300),
+			"last_callback_start_wall": None,
+			"last_source_stamp": None,
+		}
 		
 		# create message_filters subscribers for synchronization
 		self.rgb_subscriber = message_filters.Subscriber(
@@ -472,9 +700,12 @@ class DaaamNode(Node):
 
 	def synchronized_callback(self, rgb_msg: Image, depth_msg: Image) -> None:
 		"""Process synchronized RGB and depth image pairs."""
+		callback_start_wall = time.time()
+		timestamp: Optional[float] = None
 		try:
 			# timestamp
-			timestamp: float = rgb_msg.header.stamp.sec + rgb_msg.header.stamp.nanosec * 1e-9
+			timestamp = rgb_msg.header.stamp.sec + rgb_msg.header.stamp.nanosec * 1e-9
+			self._record_callback_start(timestamp, callback_start_wall)
 			
 			# tf2 transform (optional - can fail)
 			transform, success = self._get_camera_transform_tf2(rgb_msg.header.stamp)
@@ -523,13 +754,58 @@ class DaaamNode(Node):
 			with performance_measure("process_frame", self.logger.info, tracker):
 				label_image, color_image = self.orchestrator.process_frame(frame)
 
-			self._publish_segmentation_results(label_image, color_image, rgb_msg.header)
+			if self.human_clip_recorder is not None:
+				try:
+					with performance_measure("human_clip_recorder", self.logger.debug, tracker):
+						track_observations = self._build_clip_track_observations(frame)
+						self.human_clip_recorder.process_frame(
+							cv_image,
+							timestamp,
+							frame.frame_id,
+							track_observations,
+						)
+				except Exception as recorder_error:
+					self.logger.error(f"Human clip recording failed on frame {frame.frame_id}: {recorder_error}")
+
+			with performance_measure("publish_segmentation_results", self.logger.debug, tracker):
+				self._publish_segmentation_results(label_image, color_image, rgb_msg.header)
 
 			self.logger.debug(f"Processed synchronized frame with {len(frame.tracks)} tracks")
 
 		except Exception as e:
 			self.logger.error(f"Error in synchronized callback: {e}")
 			traceback.print_exc()
+		finally:
+			self._record_callback_end(callback_start_wall)
+
+	def _record_callback_start(self, timestamp: float, callback_start_wall: float) -> None:
+		stats = getattr(self, "_runtime_stats", None)
+		if not stats:
+			return
+		stats["callback_count"] += 1
+		last_wall = stats.get("last_callback_start_wall")
+		if last_wall is not None:
+			stats["callback_wall_period_ms"].append((callback_start_wall - last_wall) * 1000.0)
+		last_source = stats.get("last_source_stamp")
+		if last_source is not None and timestamp >= last_source:
+			stats["source_period_ms"].append((timestamp - last_source) * 1000.0)
+		# With rosbag/sim-time, source stamps may not share wall-clock epoch. Only
+		# record source age when it is plausibly a wall-clock timestamp.
+		age_sec = callback_start_wall - timestamp
+		if -3600.0 <= age_sec <= 3600.0:
+			stats["source_to_wall_age_sec"].append(age_sec)
+		stats["last_callback_start_wall"] = callback_start_wall
+		stats["last_source_stamp"] = timestamp
+
+	def _record_callback_end(self, callback_start_wall: float) -> None:
+		stats = getattr(self, "_runtime_stats", None)
+		if not stats:
+			return
+		duration_s = time.time() - callback_start_wall
+		stats["callback_wall_ms"].append(duration_s * 1000.0)
+		tracker = getattr(getattr(self, "orchestrator", None), "performance_tracker", None)
+		if tracker is not None:
+			tracker.record("ros_callback_total", int(duration_s * 1_000_000_000))
 
 	def camera_info_callback(self, msg: CameraInfo) -> None:
 		"""Handle camera info updates."""
@@ -582,13 +858,45 @@ class DaaamNode(Node):
 		"""Periodic health check of the pipeline."""
 		try:
 			health_status = self.orchestrator.get_health_status()
-			
-			# log health information
-			self.logger.info(f"Pipeline health: {health_status['orchestrator']['frame_count']} frames processed")
+			orch = health_status["orchestrator"]
+			queues = health_status.get("queues", {})
+			frames = int(orch["frame_count"])
+			now = time.time()
+			stats = getattr(self, "_runtime_stats", {})
+			last_wall = float(stats.get("last_health_wall", now))
+			last_frames = int(stats.get("last_health_frame_count", frames))
+			dt = max(now - last_wall, 1e-6)
+			window_fps = (frames - last_frames) / dt
+			stats["last_health_wall"] = now
+			stats["last_health_frame_count"] = frames
+
+			callback_summary = self._series_summary_ms(stats.get("callback_wall_ms", []))
+			callback_period = self._series_summary_ms(stats.get("callback_wall_period_ms", []))
+			source_period = self._series_summary_ms(stats.get("source_period_ms", []))
+			age_summary = self._series_summary_sec(stats.get("source_to_wall_age_sec", []))
+			hoi_status = self._hoi_status()
+			perf = self.orchestrator.performance_tracker.get_statistics()
+			process_frame = perf.get("process_frame", {})
+			segment_frame = perf.get("segment_frame", {})
+			grounding_workers = health_status.get("grounding_service", {}).get("workers", [])
+			ready_grounding = sum(1 for worker in grounding_workers if worker.get("is_ready"))
+			self.logger.info(
+				"Pipeline health: "
+				f"frames={frames} window_fps={window_fps:.2f} "
+				f"active_tracks={orch['active_tracks']} pending_tracks={orch.get('pending_track_ids')} "
+				f"snapshots={orch.get('frame_snapshots')} queues={queues} "
+				f"callback_ms={callback_summary} callback_period_ms={callback_period} "
+				f"source_period_ms={source_period} source_age_sec={age_summary} "
+				f"process_frame_p95_ms={process_frame.get('p95_ms', 0.0):.1f} "
+				f"segment_p95_ms={segment_frame.get('p95_ms', 0.0):.1f} "
+				f"grounding_ready={ready_grounding}/{len(grounding_workers)} "
+				f"cosmos_hoi={hoi_status} "
+				f"scene_graph={health_status.get('scene_graph_service', {})}"
+			)
 			
 			# check if workers are alive
 			for service_name, service_health in health_status.items():
-				if service_name == "orchestrator":
+				if service_name in {"orchestrator", "queues", "scene_graph_service", "worker_health"}:
 					continue
 				
 				if isinstance(service_health, dict) and "workers" in service_health:
@@ -599,8 +907,55 @@ class DaaamNode(Node):
 		except Exception as e:
 			self.logger.error(f"Error in health check: {e}")
 
+	def _series_summary_ms(self, values) -> str:
+		values = list(values or [])
+		if not values:
+			return "n=0"
+		arr = np.asarray(values, dtype=float)
+		return (
+			f"n={len(arr)} mean={float(np.mean(arr)):.1f} "
+			f"p95={float(np.percentile(arr, 95)):.1f} max={float(np.max(arr)):.1f}"
+		)
+
+	def _series_summary_sec(self, values) -> str:
+		values = list(values or [])
+		if not values:
+			return "n=0"
+		arr = np.asarray(values, dtype=float)
+		return (
+			f"n={len(arr)} mean={float(np.mean(arr)):.2f} "
+			f"p95={float(np.percentile(arr, 95)):.2f} max={float(np.max(arr)):.2f}"
+		)
+
+	def _hoi_status(self) -> dict:
+		futures = list(getattr(self, "_hoi_futures", []))
+		done = sum(1 for future in futures if future.done())
+		running = sum(1 for future in futures if future.running())
+		cancelled = sum(1 for future in futures if future.cancelled())
+		failed = 0
+		for future in futures:
+			if future.done() and not future.cancelled():
+				try:
+					if future.exception() is not None:
+						failed += 1
+				except Exception:
+					failed += 1
+		return {
+			"total": len(futures),
+			"done": done,
+			"running": running,
+			"pending": len(futures) - done - running,
+			"cancelled": cancelled,
+			"failed": failed,
+		}
+
 	def _publish_semantic_update(self, update) -> None:
 		"""Publish semantic update as JSON string."""
+		# After SIGINT the rclpy context is invalidated before destroy_node runs;
+		# corrections regenerated during shutdown would otherwise spam publish errors.
+		# The final state is persisted to corrections.yaml / dsg.json regardless.
+		if not self.context.ok():
+			return
 		try:
 			# Convert update to JSON string
 			update_json = update.model_dump_json()
@@ -617,6 +972,8 @@ class DaaamNode(Node):
 
 	def _publish_corrected_dsg_async(self) -> None:
 		"""Publish the latest corrected DSG at 1Hz."""
+		if not self.context.ok():
+			return
 		try:
 			if not hasattr(self.orchestrator, 'scene_graph_service'):
 				return
@@ -636,12 +993,97 @@ class DaaamNode(Node):
 			
 		except Exception as e:
 			self.logger.error(f"Error publishing corrected DSG: {e}")
+
+	def _build_clip_track_observations(self, frame: Frame) -> list[ClipTrackObservation]:
+		"""Collect DAAAM track/semantic state for a clip sidecar frame."""
+		state_lock = getattr(self.orchestrator, "_state_lock", None)
+		if state_lock is not None:
+			with state_lock:
+				object_labels = dict(self.orchestrator.object_labels)
+		else:
+			object_labels = dict(self.orchestrator.object_labels)
+
+		observations: list[ClipTrackObservation] = []
+		for track in frame.tracks:
+			track_id = int(track.id)
+			bbox_xyxy = [float(v) for v in np.asarray(track.bbox).reshape(-1)[:4]]
+			if len(bbox_xyxy) != 4:
+				continue
+			segmentation_contours: list[list[list[int]]] = []
+			for contour in getattr(track, "segmentation_contours", []) or []:
+				points = np.asarray(contour).reshape(-1, 2)
+				if len(points) >= 3:
+					segmentation_contours.append(
+						[[int(round(x)), int(round(y))] for x, y in points]
+					)
+
+			observations.append(
+				ClipTrackObservation(
+					track_id=track_id,
+					semantic_id=int(object_labels.get(track_id, -1)),
+					bbox_xyxy=bbox_xyxy,
+					depth_valid=bool(track.depth_valid),
+					region_area=int(getattr(track, "region_area", 0) or 0),
+					segmentation_contours=segmentation_contours,
+				)
+			)
+		return observations
+
+	def _handle_human_clip_finalized(self, artifact: HumanClipArtifact) -> None:
+		"""Spawn HOI processing for a finalized clip in a background thread."""
+		if not self.enable_cosmos_hoi_processing:
+			return
+
+		clip_path = artifact.clip_path
+		metadata_path = artifact.metadata_path
+		self.logger.info(f"Launching Cosmos HOI processing for {clip_path.name}")
+
+		def _run() -> None:
+			start_wall = time.time()
+			try:
+				out = _hoi_process_clip(
+					clip_path=clip_path,
+					metadata_path=metadata_path,
+					base_url=self.cosmos_hoi_base_url,
+					model=self.cosmos_hoi_model,
+					api_key=self.cosmos_hoi_api_key,
+					fps=self.cosmos_hoi_fps,
+					match_iou_threshold=self.cosmos_hoi_match_iou_threshold,
+					media_root=self.cosmos_hoi_media_root,
+					hoi_chunk_duration_sec=self.cosmos_hoi_chunk_duration_sec,
+					egocentric=self.egocentric,
+				)
+				duration = time.time() - start_wall
+				self.logger.info(f"Cosmos HOI done in {duration:.1f}s: {out}")
+			except Exception:
+				duration = time.time() - start_wall
+				import traceback as _tb
+				self.logger.error(
+					f"Cosmos HOI failed for {clip_path.name} after {duration:.1f}s:\n{_tb.format_exc()}"
+				)
+
+		future = self._hoi_executor.submit(_run)
+		self._hoi_futures.append(future)
 	
 	def destroy_node(self) -> None:
 		"""Cleanup when node is destroyed."""
 		print("[Shutdown] Shutting down MMLLM Grounded SAM Node")
 
+		# Stop live publishing before shutdown post-processing. orchestrator.stop()
+		# and _save_all_data() regenerate corrections that fire the semantic-update
+		# callback; after SIGINT the publisher's context is already invalid, and
+		# any live consumer is shutting down too. Final state is on disk regardless.
+		if hasattr(self, 'orchestrator') and hasattr(self.orchestrator, 'set_semantic_update_callback'):
+			self.orchestrator.set_semantic_update_callback(None)
+		if hasattr(self, 'dsg_publish_timer'):
+			self.dsg_publish_timer.cancel()
+
 		try:
+			if hasattr(self, 'human_clip_recorder') and self.human_clip_recorder is not None:
+				print("[Shutdown] Finalizing human clip recorder...")
+				self.human_clip_recorder.close()
+				print("[Shutdown] Human clip recorder finalized")
+
 			# Publish final semantic update before stopping
 			# if hasattr(self, 'orchestrator') and hasattr(self, 'semantic_updates_publisher'):
 				# try:
@@ -657,13 +1099,88 @@ class DaaamNode(Node):
 				# except Exception as e:
 				# 	print(f"[Shutdown] Error publishing final semantic update: {e}")
 
-			# stop pipeline orchestrator
+			# Checkpoint: save corrections.yaml / dsg.json now so they survive
+			# even if SIGKILL fires during the HOI wait below.
+			if hasattr(self, 'orchestrator'):
+				try:
+					print("[Shutdown] Saving checkpoint (corrections + DSG)...")
+					self.orchestrator._save_all_data()
+					print("[Shutdown] Checkpoint saved")
+				except Exception as _e:
+					print(f"[Shutdown] Checkpoint save failed (non-fatal): {_e}")
 
+			# Wait for in-flight HOI tasks BEFORE stopping the orchestrator so
+			# that the multiprocessing Manager (used by query_with_wait) stays
+			# alive until every future has finished. query_with_wait has its own
+			# internal timeout (90 s) so this blocks for at most that long.
+			if hasattr(self, '_hoi_executor'):
+				print("[Shutdown] Waiting for in-flight Cosmos HOI tasks to finish...")
+				futures = list(getattr(self, '_hoi_futures', []))
+				if futures:
+					wait(futures)  # no timeout - internal timeouts in query_with_wait bound this
+					print(f"[Shutdown] All {len(futures)} Cosmos HOI task(s) complete")
+				self._hoi_executor.shutdown(wait=False, cancel_futures=True)
+				print("[Shutdown] Cosmos HOI task wait complete")
 
+			# Now safe to stop the orchestrator (final save + worker teardown).
 			if hasattr(self, 'orchestrator'):
 				print("[Shutdown] Stopping orchestrator...")
 				self.orchestrator.stop()  # Exports performance statistics and stops workers
 				print("[Shutdown] Orchestrator stopped")
+
+			# corrections.yaml is now written - revalidate HOI matches before event grouping
+			if hasattr(self, 'orchestrator') and hasattr(self.orchestrator, 'output_dir'):
+				from daaam.human_reason import (
+					enrich_hoi_yaml_labels,
+					group_events,
+					rematch_hoi_outputs,
+					semantic_post_process_events,
+				)
+				from pathlib import Path
+				_out = Path(self.orchestrator.output_dir)
+				try:
+					if getattr(self, 'enable_cosmos_hoi_processing', False):
+						rematch_hoi_outputs(
+							_out,
+							match_iou_threshold=self.cosmos_hoi_match_iou_threshold,
+							semantic_reranking=self.cosmos_hoi_semantic_reranking,
+						)
+					else:
+						enrich_hoi_yaml_labels(_out)
+				except Exception as _e:
+					self.logger.error(f"[Shutdown] HOI corrections rematch/enrichment failed: {_e}")
+				if getattr(self, 'enable_cosmos_hoi_processing', False):
+					self.logger.info("[Shutdown] Running group_events...")
+					import os as _os
+					_llm_base_url = self.config.grounding.llm_base_url or "https://api.openai.com/v1"
+					_llm_api_key = _os.environ.get("OPENAI_API_KEY", "")
+					try:
+						_events_path = group_events(
+							output_dir=_out,
+							base_url=_llm_base_url,
+							model=self.event_grouper_model,
+							api_key=_llm_api_key,
+						)
+						if _events_path:
+							self.logger.info(f"[Shutdown] group_events wrote {_events_path}")
+							if getattr(self, 'enable_semantic_event_post_processing', True):
+								_semantic_events_path = semantic_post_process_events(
+									_out,
+									base_url=_llm_base_url,
+									model=self.event_grouper_model,
+									api_key=_llm_api_key,
+									output_name=self.semantic_event_output_name,
+									neighbor_window_sec=self.semantic_event_neighbor_window_sec,
+									confidence_threshold=self.semantic_event_confidence_threshold,
+								)
+								if _semantic_events_path:
+									self.logger.info(f"[Shutdown] semantic_post_process_events wrote {_semantic_events_path}")
+							else:
+								self.logger.info("[Shutdown] semantic event post-processing disabled")
+						else:
+							self.logger.warning("[Shutdown] group_events returned no output (empty interactions or Cosmos response)")
+					except Exception as _e:
+						self.logger.error(f"[Shutdown] group_events failed: {_e}")
 
 			import time
 			time.sleep(1.0)  # Grace period for final log writes
@@ -764,12 +1281,13 @@ class DaaamNode(Node):
 def _shutdown_watchdog(timeout: float) -> None:
 	"""Force process exit if shutdown exceeds timeout."""
 	time.sleep(timeout)
-	print(f"[WATCHDOG] Shutdown exceeded {timeout}s — forcing exit", file=sys.stderr)
+	print(f"[WATCHDOG] Shutdown exceeded {timeout}s - forcing exit", file=sys.stderr)
 	os._exit(1)
 
 def main(args=None):
 	"""Main function for the ROS2 node."""
 	rclpy.init(args=args)
+	node = None
 
 	try:
 		node = DaaamNode()
@@ -780,13 +1298,15 @@ def main(args=None):
 		print(f"Error starting node: {e}")
 		traceback.print_exc()
 	finally:
-		# Start watchdog — guarantees process exit even if shutdown path blocks
-		watchdog = threading.Thread(target=_shutdown_watchdog, args=(55.0,), daemon=True)
+		# Start watchdog - guarantees process exit even if shutdown path blocks
+		watchdog = threading.Thread(target=_shutdown_watchdog, args=(240.0,), daemon=True)
 		watchdog.start()
 
 		print("Destroying node...")
-		node.destroy_node()
-		rclpy.shutdown()
+		if node is not None:
+			node.destroy_node()
+		if rclpy.ok():
+			rclpy.shutdown()
 
 
 if __name__ == "__main__":

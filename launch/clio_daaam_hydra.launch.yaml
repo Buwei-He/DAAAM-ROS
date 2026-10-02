@@ -48,6 +48,18 @@ launch:
   - arg: {name: enable_zmq, default: 'false'}
   - arg: {name: zmq_url, default: 'tcp://127.0.0.1:8001'}
   - arg: {name: zmq_send_mesh, default: 'false'}
+  - arg: {name: save_human_clips, default: 'false'}
+  - arg: {name: human_clip_detector_weights, default: 'yolo11n.pt'}
+  - arg: {name: human_clip_detector_conf, default: '0.25'}
+  - arg: {name: human_clip_detector_device, default: ''}
+  - arg: {name: human_clip_min_frames, default: '4'}
+  - arg: {name: human_clip_output_fps, default: '4.0'}
+  - arg: {name: enable_cosmos_hoi_processing, default: 'false'}
+  - arg: {name: cosmos_hoi_base_url, default: 'http://node078:8000/v1'}
+  - arg: {name: cosmos_hoi_model, default: 'cosmos-reason2'}
+  - arg: {name: cosmos_hoi_api_key, default: 'EMPTY'}
+  - arg: {name: cosmos_hoi_fps, default: '4.0'}
+  - arg: {name: cosmos_hoi_match_iou_threshold, default: '0.1'}
 
   - set_remap: {from: hydra_visualizer/dsg, to: hydra/backend/dsg}
   - node: {pkg: tf2_ros, exec: static_transform_publisher, args: '--frame-id world --child-frame-id map'}
@@ -105,6 +117,18 @@ launch:
         - {name: enable_debug_output, value: 'true'}
         - {name: output_dir, value: 'output/clio'}
         - {name: defer_dsg_processing, value: $(var defer_dsg_processing)}
+        - {name: save_human_clips, value: $(var save_human_clips)}
+        - {name: human_clip_detector_weights, value: $(var human_clip_detector_weights)}
+        - {name: human_clip_detector_conf, value: $(var human_clip_detector_conf)}
+        - {name: human_clip_detector_device, value: $(var human_clip_detector_device)}
+        - {name: human_clip_min_frames, value: $(var human_clip_min_frames)}
+        - {name: human_clip_output_fps, value: $(var human_clip_output_fps)}
+        - {name: enable_cosmos_hoi_processing, value: $(var enable_cosmos_hoi_processing)}
+        - {name: cosmos_hoi_base_url, value: $(var cosmos_hoi_base_url)}
+        - {name: cosmos_hoi_model, value: $(var cosmos_hoi_model)}
+        - {name: cosmos_hoi_api_key, value: $(var cosmos_hoi_api_key)}
+        - {name: cosmos_hoi_fps, value: $(var cosmos_hoi_fps)}
+        - {name: cosmos_hoi_match_iou_threshold, value: $(var cosmos_hoi_match_iou_threshold)}
         
   # Hydra node
   - node:
