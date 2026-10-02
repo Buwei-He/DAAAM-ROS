@@ -42,6 +42,8 @@ from daaam.human_reason.human_clip_recorder import (
 	HumanClipRecorderConfig,
 )
 from daaam.human_reason import process_clip as _hoi_process_clip
+from daaam.human_reason.clip_processor import PASS1_INPUTS, pass1_stream_factory
+from daaam.human_reason.cosmos_client import VIDEO_SAMPLING_MODES
 from daaam.human_reason.live_query import LiveQueryBridge
 from daaam.scene_understanding.config import SceneUnderstandingConfig, ToolConfig
 from daaam.human_reason import RematchCache
@@ -63,6 +65,11 @@ _HUMAN_REASON_PARAM_DEFAULTS = {
 	"cosmos_hoi_fps": 4.0,
 	"cosmos_hoi_match_iou_threshold": 0.1,
 	"cosmos_hoi_semantic_reranking": False,
+	"cosmos_hoi_video_sampling": "processor",
+	"cosmos_hoi_pass1_input": "mp4",
+	"cosmos_hoi_early_pass2": False,
+	"cosmos_hoi_stream_fps": 2.0,
+	"cosmos_hoi_stream_warmup_interval_sec": 1.0,
 	"enable_semantic_event_post_processing": True,
 	"semantic_event_output_name": "events_semantic.yaml",
 	"semantic_event_neighbor_window_sec": 8.0,
@@ -103,6 +110,7 @@ class DaaamNode(Node):
 
 		# load pipeline self.config, override with ROS parameters
 		self._load_pipeline_config()
+		self._check_cosmos_hoi_modes()
 
 		# Initialize pipeline orchestrator with self.config
 		self._initialize_pipeline()
@@ -213,6 +221,12 @@ class DaaamNode(Node):
 		self.declare_parameter("cosmos_hoi_fps", 4.0)
 		self.declare_parameter("cosmos_hoi_match_iou_threshold", 0.1)
 		self.declare_parameter("cosmos_hoi_semantic_reranking", False)
+		# Latency options, all off by default; see daaam CosmosHOIConfig.
+		self.declare_parameter("cosmos_hoi_video_sampling", "processor")
+		self.declare_parameter("cosmos_hoi_pass1_input", "mp4")
+		self.declare_parameter("cosmos_hoi_early_pass2", False)
+		self.declare_parameter("cosmos_hoi_stream_fps", 2.0)
+		self.declare_parameter("cosmos_hoi_stream_warmup_interval_sec", 1.0)
 		self.declare_parameter("enable_semantic_event_post_processing", True)
 		self.declare_parameter("semantic_event_output_name", "events_semantic.yaml")
 		self.declare_parameter("semantic_event_neighbor_window_sec", 8.0)
@@ -348,6 +362,21 @@ class DaaamNode(Node):
 		self.cosmos_hoi_semantic_reranking = self.get_parameter(
 			"cosmos_hoi_semantic_reranking"
 		).get_parameter_value().bool_value
+		self.cosmos_hoi_video_sampling = self.get_parameter(
+			"cosmos_hoi_video_sampling"
+		).get_parameter_value().string_value
+		self.cosmos_hoi_pass1_input = self.get_parameter(
+			"cosmos_hoi_pass1_input"
+		).get_parameter_value().string_value
+		self.cosmos_hoi_early_pass2 = self.get_parameter(
+			"cosmos_hoi_early_pass2"
+		).get_parameter_value().bool_value
+		self.cosmos_hoi_stream_fps = self.get_parameter(
+			"cosmos_hoi_stream_fps"
+		).get_parameter_value().double_value
+		self.cosmos_hoi_stream_warmup_interval_sec = self.get_parameter(
+			"cosmos_hoi_stream_warmup_interval_sec"
+		).get_parameter_value().double_value
 		self.enable_semantic_event_post_processing = self.get_parameter(
 			"enable_semantic_event_post_processing"
 		).get_parameter_value().bool_value
@@ -521,6 +550,21 @@ class DaaamNode(Node):
 		self._use_config_default("cosmos_hoi_fps", cosmos_hoi.fps)
 		self._use_config_default("cosmos_hoi_match_iou_threshold", cosmos_hoi.match_iou_threshold)
 		self._use_config_default("cosmos_hoi_semantic_reranking", cosmos_hoi.semantic_reranking)
+		self._use_config_default("cosmos_hoi_video_sampling", cosmos_hoi.video_sampling)
+		self._use_config_default("cosmos_hoi_pass1_input", cosmos_hoi.pass1_input)
+		self._use_config_default("cosmos_hoi_early_pass2", cosmos_hoi.early_pass2)
+		self._use_config_default("cosmos_hoi_stream_fps", cosmos_hoi.stream_fps)
+		self._use_config_default("cosmos_hoi_stream_warmup_interval_sec", cosmos_hoi.stream_warmup_interval_sec)
+
+	def _check_cosmos_hoi_modes(self) -> None:
+		"""Refuse unknown mode names at startup. Outside _load_pipeline_config's
+		try on purpose: an error swallowed there would run the MP4 path instead."""
+		if self.cosmos_hoi_video_sampling not in VIDEO_SAMPLING_MODES:
+			raise ValueError(f"cosmos_hoi_video_sampling must be one of {VIDEO_SAMPLING_MODES}, "
+							 f"not {self.cosmos_hoi_video_sampling!r}")
+		if self.cosmos_hoi_pass1_input not in PASS1_INPUTS:
+			raise ValueError(f"cosmos_hoi_pass1_input must be one of {PASS1_INPUTS}, "
+							 f"not {self.cosmos_hoi_pass1_input!r}")
 
 		semantic_events = human_reason.semantic_events
 		self._use_config_default("enable_semantic_event_post_processing", semantic_events.enabled)
@@ -669,11 +713,31 @@ class DaaamNode(Node):
 					f"clips ({self.live_buffer_sec:.0f}s)"
 				)
 
+		clip_stream_factory = None
+		if self.enable_cosmos_hoi_processing and self.cosmos_hoi_pass1_input == "stream":
+			clip_stream_factory = pass1_stream_factory(
+				self.cosmos_hoi_base_url, self.cosmos_hoi_model, self.cosmos_hoi_api_key,
+				max_clip_sec=self.human_clip_max_clip_sec,
+				fps=self.cosmos_hoi_stream_fps,
+				warmup_interval_sec=self.cosmos_hoi_stream_warmup_interval_sec,
+			)
+			self.logger.info(
+				f"Pass 1 input: stream, prefilled while recording at {self.cosmos_hoi_stream_fps:.1f} fps"
+			)
+		if self.enable_cosmos_hoi_processing and (
+			self.cosmos_hoi_pass1_input != "mp4" or self.cosmos_hoi_early_pass2
+			or self.cosmos_hoi_video_sampling != "processor"
+		):
+			self.logger.info(
+				f"Cosmos HOI latency options: pass1_input={self.cosmos_hoi_pass1_input} "
+				f"early_pass2={self.cosmos_hoi_early_pass2} video_sampling={self.cosmos_hoi_video_sampling}"
+			)
 		self.human_clip_recorder = HumanClipRecorder(
 			config=recorder_config,
 			output_dir=self.orchestrator.output_dir,
 			logger=self.logger,
 			on_clip_finalized=self._handle_human_clip_finalized,
+			clip_stream_factory=clip_stream_factory,
 		)
 
 	def _initialize_ros_components(self) -> None:
@@ -1175,6 +1239,16 @@ class DaaamNode(Node):
 	def _handle_human_clip_finalized(self, artifact: HumanClipArtifact) -> None:
 		"""Spawn HOI processing for a finalized clip in a background thread."""
 		if not self.enable_cosmos_hoi_processing:
+			if artifact.pass1_stream is not None:
+				artifact.pass1_stream.close()
+			return
+		if self.cosmos_hoi_pass1_input == "stream" and artifact.pass1_stream is None:
+			# The stream failed during recording (the recorder logged why). No
+			# silent switch to the MP4: that would be a different Pass 1 input.
+			self.logger.error(
+				f"Skipping Cosmos HOI for {artifact.clip_path.name}: pass1_input=stream "
+				"but this clip has no Pass 1 stream"
+			)
 			return
 
 		clip_path = artifact.clip_path
@@ -1194,6 +1268,9 @@ class DaaamNode(Node):
 					match_iou_threshold=self.cosmos_hoi_match_iou_threshold,
 					media_root=self.cosmos_hoi_media_root,
 					egocentric=self.egocentric,
+					video_sampling=self.cosmos_hoi_video_sampling,
+					pass1_stream=artifact.pass1_stream,
+					early_pass2=self.cosmos_hoi_early_pass2,
 				)
 				duration = time.time() - start_wall
 				self.logger.info(f"Cosmos HOI done in {duration:.1f}s: {out}")

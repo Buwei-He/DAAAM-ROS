@@ -83,6 +83,12 @@ launch:
   - arg: {name: cosmos_hoi_enrich_pass1_location, default: 'false'}
   - arg: {name: cosmos_hoi_match_iou_threshold, default: '0.1'}
   - arg: {name: cosmos_hoi_streaming, default: 'false'}
+  # Latency options (off = paper path); see daaam CosmosHOIConfig.
+  - arg: {name: cosmos_hoi_video_sampling, default: 'processor'}
+  - arg: {name: cosmos_hoi_pass1_input, default: 'mp4'}
+  - arg: {name: cosmos_hoi_early_pass2, default: 'false'}
+  - arg: {name: cosmos_hoi_stream_fps, default: '2.0'}
+  - arg: {name: cosmos_hoi_stream_warmup_interval_sec, default: '1.0'}
   - arg: {name: enable_semantic_event_post_processing, default: 'true'}
   - arg: {name: semantic_event_output_name, default: 'events_semantic.yaml'}
   - arg: {name: semantic_event_neighbor_window_sec, default: '8.0'}
@@ -178,6 +184,11 @@ launch:
         - {name: cosmos_hoi_enrich_pass1_location, value: $(var cosmos_hoi_enrich_pass1_location)}
         - {name: cosmos_hoi_match_iou_threshold, value: $(var cosmos_hoi_match_iou_threshold)}
         - {name: cosmos_hoi_streaming, value: $(var cosmos_hoi_streaming)}
+        - {name: cosmos_hoi_video_sampling, value: $(var cosmos_hoi_video_sampling)}
+        - {name: cosmos_hoi_pass1_input, value: $(var cosmos_hoi_pass1_input)}
+        - {name: cosmos_hoi_early_pass2, value: $(var cosmos_hoi_early_pass2)}
+        - {name: cosmos_hoi_stream_fps, value: $(var cosmos_hoi_stream_fps)}
+        - {name: cosmos_hoi_stream_warmup_interval_sec, value: $(var cosmos_hoi_stream_warmup_interval_sec)}
         - {name: enable_semantic_event_post_processing, value: $(var enable_semantic_event_post_processing)}
         - {name: semantic_event_output_name, value: $(var semantic_event_output_name)}
         - {name: semantic_event_neighbor_window_sec, value: $(var semantic_event_neighbor_window_sec)}
