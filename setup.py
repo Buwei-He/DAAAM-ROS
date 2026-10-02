@@ -17,7 +17,7 @@ setup(
     maintainer='user',
     maintainer_email='ngorlo@mit.edu',
     description='ROS2 interface for a package for creating large-scale spatio-temporal memory with detailed annotations in real-time',
-    license='MIT',
+    license='BSD-3-Clause',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
