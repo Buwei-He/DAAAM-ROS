@@ -74,7 +74,7 @@ _HUMAN_REASON_PARAM_DEFAULTS = {
 	"semantic_event_output_name": "events_semantic.yaml",
 	"semantic_event_neighbor_window_sec": 8.0,
 	"semantic_event_confidence_threshold": 0.65,
-	"event_grouper_model": "gpt-5.4-mini",
+	"llm_model": "gpt-5.4-mini",
 }
 
 class DaaamNode(Node):
@@ -231,7 +231,7 @@ class DaaamNode(Node):
 		self.declare_parameter("semantic_event_output_name", "events_semantic.yaml")
 		self.declare_parameter("semantic_event_neighbor_window_sec", 8.0)
 		self.declare_parameter("semantic_event_confidence_threshold", 0.65)
-		self.declare_parameter("event_grouper_model", "gpt-5.4-mini")
+		self.declare_parameter("llm_model", "gpt-5.4-mini")  # text LLM: event grouping, judges, /ask router default
 
 		# live HOI query (demo): reason on a rolling recent-history buffer on demand,
 		# independent of save_human_clips/enable_cosmos_hoi_processing's finalize-on-
@@ -254,7 +254,7 @@ class DaaamNode(Node):
 		# models) at startup, an unverified-live code path, so it's opt-in only,
 		# never a silent fallback. Requires enable_live_hoi_query.
 		self.declare_parameter("enable_live_query_router", False)
-		# "" = the run's grounding.agent_model_name / llm_base_url from pipeline_config,
+		# "" = the run's human_reason.semantic_events.llm_model / grounding.llm_base_url,
 		# so the live router answers with the same model as scripts/eval/run_qa.py.
 		self.declare_parameter("live_query_router_model", "")
 		self.declare_parameter("live_query_router_base_url", "")
@@ -391,7 +391,7 @@ class DaaamNode(Node):
 		self.semantic_event_confidence_threshold = self.get_parameter(
 			"semantic_event_confidence_threshold"
 		).get_parameter_value().double_value
-		self.event_grouper_model = self.get_parameter("event_grouper_model").get_parameter_value().string_value
+		self.llm_model = self.get_parameter("llm_model").get_parameter_value().string_value
 
 		self.enable_live_hoi_query = self.get_parameter("enable_live_hoi_query").get_parameter_value().bool_value
 		self.live_buffer_sec = self.get_parameter("live_buffer_sec").get_parameter_value().double_value
@@ -446,7 +446,7 @@ class DaaamNode(Node):
 			# Use explicit human/HOI config defaults before applying ROS overrides.
 			self._apply_human_reason_config_defaults()
 			if not self.live_query_router_model:
-				self.live_query_router_model = self.config.grounding.agent_model_name
+				self.live_query_router_model = self.llm_model
 			if self.live_query_router_base_url is None:
 				self.live_query_router_base_url = self.config.grounding.llm_base_url
 			# override with ROS parameters
@@ -577,7 +577,7 @@ class DaaamNode(Node):
 		self._use_config_default("semantic_event_output_name", semantic_events.output_name)
 		self._use_config_default("semantic_event_neighbor_window_sec", semantic_events.neighbor_window_sec)
 		self._use_config_default("semantic_event_confidence_threshold", semantic_events.confidence_threshold)
-		self._use_config_default("event_grouper_model", semantic_events.event_grouper_model)
+		self._use_config_default("llm_model", semantic_events.llm_model)
 
 	def _override_config_with_parameters(self) -> None:
 		"""Override configuration with ROS parameters."""
@@ -1319,7 +1319,7 @@ class DaaamNode(Node):
 			_Path(self.orchestrator.output_dir),
 			cosmos_hoi_enabled=getattr(self, 'enable_cosmos_hoi_processing', False),
 			llm_base_url=self.config.grounding.llm_base_url or "https://api.openai.com/v1",
-			llm_model=self.event_grouper_model,
+			llm_model=self.llm_model,
 			llm_api_key=_os.environ.get("OPENAI_API_KEY", ""),
 			match_iou_threshold=self.cosmos_hoi_match_iou_threshold,
 			semantic_reranking=self.cosmos_hoi_semantic_reranking,

@@ -91,7 +91,7 @@ launch:
   - arg: {name: live_bridge_host, default: '0.0.0.0'}
   - arg: {name: live_bridge_port, default: '8100'}
   - arg: {name: enable_live_query_router, default: 'false', description: 'POST /ask picks dsg/interactions/events/video itself'}
-  - arg: {name: live_query_router_model, default: '', description: "'' = grounding.agent_model_name from pipeline_config"}
+  - arg: {name: live_query_router_model, default: '', description: "'' = human_reason.semantic_events.llm_model from pipeline_config"}
   - arg: {name: live_query_router_base_url, default: ''}
   - arg: {name: live_query_router_api_key, default: ''}
   - arg: {name: live_query_router_max_iterations, default: '6', description: 'tool-call round-trips before forcing an answer; lower than the offline default (15) to bound live latency'}
