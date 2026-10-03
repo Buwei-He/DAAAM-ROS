@@ -1299,8 +1299,13 @@ class DaaamNode(Node):
 		"""
 		from daaam.human_reason.label_similarity import LabelScorer
 
+		semantic = self.config.human_reason.semantic_events
+		LabelScorer.configure(semantic.link_judge, model_name=semantic.link_judge_model)
 		router_agent = getattr(getattr(self, "live_query_bridge", None), "router_agent", None)
-		if router_agent is not None:
+		shareable = (router_agent is not None and semantic.link_judge == "sentence"
+		             and (not semantic.link_judge_model
+		                  or router_agent.sentence_handler.model_name == semantic.link_judge_model))
+		if shareable:
 			LabelScorer.use_handler(router_agent.sentence_handler)
 			self.logger.info("Event refresh shares the /ask router's sentence-embedding model")
 			return
@@ -1327,6 +1332,8 @@ class DaaamNode(Node):
 			semantic_output_name=self.semantic_event_output_name,
 			neighbor_window_sec=self.semantic_event_neighbor_window_sec,
 			confidence_threshold=self.semantic_event_confidence_threshold,
+			link_judge=self.config.human_reason.semantic_events.link_judge,
+			link_judge_model=self.config.human_reason.semantic_events.link_judge_model,
 			rematch_cache=rematch_cache,
 			logger=self.logger,
 		)
