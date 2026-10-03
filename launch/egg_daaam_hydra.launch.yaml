@@ -75,6 +75,8 @@ launch:
   - arg: {name: human_clip_output_fps, default: '4.0'}
   - arg: {name: human_clip_context_sec, default: '1.0'}
   - arg: {name: enable_cosmos_hoi_processing, default: 'false'}
+  - arg: {name: captioner, default: '', description: "'' = pipeline_config workers.dam_grounding_config.captioner; dam | cosmos | dam+cosmos_shadow"}
+  - arg: {name: cosmos_caption_region, default: '', description: "'' = pipeline_config value; box | crop | box+crop"}
   - arg: {name: cosmos_hoi_base_url, default: 'http://localhost:8000/v1'}
   - arg: {name: cosmos_hoi_model, default: 'cosmos-reason2'}
   - arg: {name: cosmos_hoi_api_key, default: 'EMPTY'}
@@ -134,6 +136,8 @@ launch:
         - {name: sam_imgsz, value: $(var sam_imgsz)}
         - {name: sentence_embedding_model, value: ""}
         - {name: compute_full_image_description, value: 'true'}
+        - {name: captioner, value: $(var captioner)}
+        - {name: cosmos_caption_region, value: $(var cosmos_caption_region)}
 
         - {name: depth_lb, value: $(var depth_lb)}
         - {name: depth_ub, value: $(var depth_ub)}

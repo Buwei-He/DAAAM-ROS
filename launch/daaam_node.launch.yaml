@@ -26,6 +26,8 @@ launch:
   - arg: {name: sam_imgsz, default: ''}  # Empty string for auto, or '1024,1248' for TensorRT (height,width)
   - arg: {name: sentence_embedding_model, default: "sentence-transformers/sentence-t5-xl"} # Qwen/Qwen3-Embedding-4B
   - arg: {name: compute_full_image_description, default: 'true'}
+  - arg: {name: captioner, default: '', description: "'' = pipeline_config workers.dam_grounding_config.captioner; dam | cosmos | dam+cosmos_shadow"}
+  - arg: {name: cosmos_caption_region, default: '', description: "'' = pipeline_config value; box | crop | box+crop"}
 
   # Processing parameters
   - arg: {name: query_interval_frames, default: '60'}
@@ -122,6 +124,8 @@ launch:
         - {name: sam_imgsz, value: $(var sam_imgsz)}
         - {name: sentence_embedding_model, value: $(var sentence_embedding_model)}
         - {name: compute_full_image_description, value: $(var compute_full_image_description)}
+        - {name: captioner, value: $(var captioner)}
+        - {name: cosmos_caption_region, value: $(var cosmos_caption_region)}
 
         # Processing parameters
         - {name: query_interval_frames, value: $(var query_interval_frames)}

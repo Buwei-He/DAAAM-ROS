@@ -170,6 +170,9 @@ class DaaamNode(Node):
 		self.declare_parameter("multi_image_min_n_masks", 32)
 		self.declare_parameter("dataset_name", "unknown")
 		self.declare_parameter("compute_full_image_description", False)
+		# "" = pipeline_config workers.dam_grounding_config value
+		self.declare_parameter("captioner", "")
+		self.declare_parameter("cosmos_caption_region", "")
 		self.declare_parameter("save_grounding_images", False)
 		self.declare_parameter("save_plain_grounding_images", False)
 		self.declare_parameter("save_object_images", False)
@@ -311,6 +314,8 @@ class DaaamNode(Node):
 		self.multi_image_min_n_masks = self.get_parameter("multi_image_min_n_masks").get_parameter_value().integer_value
 		self.dataset_name = self.get_parameter("dataset_name").get_parameter_value().string_value
 		self.compute_full_image_description = self.get_parameter("compute_full_image_description").get_parameter_value().bool_value
+		self.captioner = self.get_parameter("captioner").get_parameter_value().string_value
+		self.cosmos_caption_region = self.get_parameter("cosmos_caption_region").get_parameter_value().string_value
 		self.save_grounding_images = self.get_parameter("save_grounding_images").get_parameter_value().bool_value
 		self.save_plain_grounding_images = self.get_parameter("save_plain_grounding_images").get_parameter_value().bool_value
 		self.save_object_images = self.get_parameter("save_object_images").get_parameter_value().bool_value
@@ -562,6 +567,13 @@ class DaaamNode(Node):
 		self._use_config_default("cosmos_hoi_stream_fps", cosmos_hoi.stream_fps)
 		self._use_config_default("cosmos_hoi_stream_warmup_interval_sec", cosmos_hoi.stream_warmup_interval_sec)
 
+		semantic_events = human_reason.semantic_events
+		self._use_config_default("enable_semantic_event_post_processing", semantic_events.enabled)
+		self._use_config_default("semantic_event_output_name", semantic_events.output_name)
+		self._use_config_default("semantic_event_neighbor_window_sec", semantic_events.neighbor_window_sec)
+		self._use_config_default("semantic_event_confidence_threshold", semantic_events.confidence_threshold)
+		self._use_config_default("llm_model", semantic_events.llm_model)
+
 	def _check_cosmos_hoi_modes(self) -> None:
 		"""Refuse unknown mode names at startup. Outside _load_pipeline_config's
 		try on purpose: an error swallowed there would run the MP4 path instead."""
@@ -571,13 +583,6 @@ class DaaamNode(Node):
 		if self.cosmos_hoi_pass1_input not in PASS1_INPUTS:
 			raise ValueError(f"cosmos_hoi_pass1_input must be one of {PASS1_INPUTS}, "
 							 f"not {self.cosmos_hoi_pass1_input!r}")
-
-		semantic_events = human_reason.semantic_events
-		self._use_config_default("enable_semantic_event_post_processing", semantic_events.enabled)
-		self._use_config_default("semantic_event_output_name", semantic_events.output_name)
-		self._use_config_default("semantic_event_neighbor_window_sec", semantic_events.neighbor_window_sec)
-		self._use_config_default("semantic_event_confidence_threshold", semantic_events.confidence_threshold)
-		self._use_config_default("llm_model", semantic_events.llm_model)
 
 	def _override_config_with_parameters(self) -> None:
 		"""Override configuration with ROS parameters."""
@@ -596,6 +601,12 @@ class DaaamNode(Node):
 		self.config.grounding.sentence_embedding_model = self.sentence_embedding_model
 		self.config.workers.dam_grounding_config.sentence_embedding_model_name = self.sentence_embedding_model
 		self.config.workers.dam_grounding_config.compute_full_image_description = self.compute_full_image_description
+		if self.captioner:
+			self.config.workers.dam_grounding_config.captioner = self.captioner
+		if self.cosmos_caption_region:
+			self.config.workers.dam_grounding_config.cosmos_caption_region = self.cosmos_caption_region
+		self.logger.info(f"Captioner: {self.config.workers.dam_grounding_config.captioner} "
+						 f"(cosmos region {self.config.workers.dam_grounding_config.cosmos_caption_region})")
 
 		self.config.workers.num_assignment_workers = self.num_assignment_workers
 		self.config.workers.num_grounding_workers = self.num_grounding_workers
