@@ -1255,6 +1255,12 @@ class DaaamNode(Node):
 
 	def _handle_human_clip_finalized(self, artifact: HumanClipArtifact) -> None:
 		"""Spawn HOI processing for a finalized clip in a background thread."""
+		# stderr trace: the node logger stops writing after startup (open issue), and a
+		# silently skipped HOI launch cost a day of debugging; this line always shows.
+		print(f"[hoi] clip finalized {artifact.clip_path.name}: cosmos_hoi={self.enable_cosmos_hoi_processing} "
+			  f"pass1_input={self.cosmos_hoi_pass1_input} video_sampling={self.cosmos_hoi_video_sampling} "
+			  f"stream={'yes' if artifact.pass1_stream is not None else 'no'}",
+			  file=sys.stderr, flush=True)
 		if not self.enable_cosmos_hoi_processing:
 			if artifact.pass1_stream is not None:
 				artifact.pass1_stream.close()
@@ -1291,12 +1297,14 @@ class DaaamNode(Node):
 				)
 				duration = time.time() - start_wall
 				self.logger.info(f"Cosmos HOI done in {duration:.1f}s: {out}")
+				print(f"[hoi] done {clip_path.name} in {duration:.1f}s", file=sys.stderr, flush=True)
 			except Exception:
 				duration = time.time() - start_wall
 				import traceback as _tb
 				self.logger.error(
 					f"Cosmos HOI failed for {clip_path.name} after {duration:.1f}s:\n{_tb.format_exc()}"
 				)
+				print(f"[hoi] FAILED {clip_path.name} after {duration:.1f}s: {_tb.format_exc().splitlines()[-1]}", file=sys.stderr, flush=True)
 
 		future = self._hoi_executor.submit(_run)
 		self._hoi_futures.append(future)
