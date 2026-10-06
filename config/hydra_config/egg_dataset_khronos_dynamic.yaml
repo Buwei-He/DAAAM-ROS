@@ -33,7 +33,7 @@ active_window:
     type: FreeSpaceMotionDetector
     min_cluster_size: 500
     min_separation_distance: 2
-    num_threads: 8
+    num_threads: 4  # 3x8 threads oversubscribed the 16-core job and slowed the DAAAM node; 4 is also faster for Hydra itself
     max_range: 5.0
   tracker:
     type: MaxIouTracker
@@ -45,7 +45,7 @@ active_window:
     min_num_observations: 8
   tracking_integrator:
     temporal_window: 10.0
-    num_threads: 8
+    num_threads: 4
   object_extractor:
     type: MeshObjectExtractor
     verbosity: 1
@@ -59,7 +59,7 @@ active_window:
     object_reconstruction_resolution: -0.02 # Positive: voxel size in meters. Negative: fraction of the extent. 0: Skip. (-0.02)
     visualize_classification: false # For debugging.
     projective_integrator:
-      num_threads: 8 
+      num_threads: 4 
 frontend:
   enable_mesh_objects: false
   pgmo:
