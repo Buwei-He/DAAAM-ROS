@@ -18,6 +18,8 @@ launch:
   - arg: {name: depth_scale, default: '1000.0', description: depth image scale factor (e.g. 1000 for mm to m)}
   - arg: {name: sync_tolerance, default: '0.25'}
   - arg: {name: defer_dsg_processing, default: 'true', description: Defer DSG processing until shutdown for performance}
+  - arg: {name: dsg_update_min_interval_s, default: '0.0', description: 'min seconds between Hydra graph updates processed by the node (newest wins); 0 = every update'}
+  - arg: {name: cmc_method, default: ecc, description: 'BoT-SORT camera motion compensation: ecc | orb | sof | sift | none (identity warp, fixed camera)'}
 
   - arg: {name: robot_id, default: '0', description: unique robot identifier}
   - arg: {name: sensor_frame, default: cam0_optical_frame, description: camera optical frame}
@@ -164,11 +166,13 @@ launch:
         - {name: reid_weights, value: 'checkpoints/reid_weights/clip_general.engine'}
         - {name: with_reid, value: 'true'}
         - {name: reid_half, value: 'false'}
+        - {name: cmc_method, value: $(var cmc_method)}
 
         - {name: enable_debug_output, value: 'true'}
         - {name: output_dir, value: 'output/egg'}
         - {name: output_run_prefix, value: $(var output_run_prefix)}
         - {name: defer_dsg_processing, value: $(var defer_dsg_processing)}
+        - {name: dsg_update_min_interval_s, value: $(var dsg_update_min_interval_s)}
         - {name: cuda_device, value: $(var cuda_device)}
         - {name: save_human_clips, value: $(var save_human_clips)}
         - {name: human_clip_detector_weights, value: $(var human_clip_detector_weights)}

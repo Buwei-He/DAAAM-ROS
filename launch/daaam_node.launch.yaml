@@ -37,6 +37,8 @@ launch:
   - arg: {name: grounding_worker, default: 'dam_multi_image'}
   - arg: {name: min_mask_region_area, default: '300'}
   - arg: {name: defer_dsg_processing, default: 'false', description: Defer DSG processing until shutdown for performance}
+  - arg: {name: dsg_update_min_interval_s, default: '0.0', description: 'min seconds between Hydra graph updates processed by the node (newest wins); 0 = every update'}
+  - arg: {name: cmc_method, default: ecc, description: 'BoT-SORT camera motion compensation: ecc | orb | sof | sift | none'}
 
   # Worker-specific parameters
   - arg: {name: min_obs_per_track, default: '6'}
@@ -140,6 +142,8 @@ launch:
         - {name: grounding_worker, value: $(var grounding_worker)}
         - {name: min_mask_region_area, value: $(var min_mask_region_area)}
         - {name: defer_dsg_processing, value: $(var defer_dsg_processing)}
+        - {name: dsg_update_min_interval_s, value: $(var dsg_update_min_interval_s)}
+        - {name: cmc_method, value: $(var cmc_method)}
 
         
         # Worker-specific parameters

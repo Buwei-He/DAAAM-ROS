@@ -199,6 +199,8 @@ class DaaamNode(Node):
 		self.declare_parameter("reid_weights", "checkpoints/reid_weights/clip_general.engine")
 		self.declare_parameter("with_reid", True)
 		self.declare_parameter("reid_half", False)  # FP16 for ReID (False for CLIP models)
+		self.declare_parameter("cmc_method", "ecc")  # BoT-SORT camera motion compensation: ecc | orb | sof | sift | none
+		self.declare_parameter("dsg_update_min_interval_s", 0.0)  # min seconds between processed Hydra graph updates (0 = every update)
 
 		# debug and output
 		self.declare_parameter("enable_debug_output", True)
@@ -337,6 +339,8 @@ class DaaamNode(Node):
 		self.reid_weights = self.get_parameter("reid_weights").get_parameter_value().string_value
 		self.with_reid = self.get_parameter("with_reid").get_parameter_value().bool_value
 		self.reid_half = self.get_parameter("reid_half").get_parameter_value().bool_value
+		self.cmc_method = self.get_parameter("cmc_method").get_parameter_value().string_value
+		self.dsg_update_min_interval_s = self.get_parameter("dsg_update_min_interval_s").get_parameter_value().double_value
 
 		# debug
 		self.enable_debug_output = self.get_parameter("enable_debug_output").get_parameter_value().bool_value
@@ -668,12 +672,15 @@ class DaaamNode(Node):
 
 		self.config.scene_graph.defer_dsg_processing = self.defer_dsg_processing
 		self.logger.info(f"Set defer_dsg_processing to {self.defer_dsg_processing}")
+		self.config.scene_graph.dsg_update_min_interval_s = self.dsg_update_min_interval_s
+		self.logger.info(f"Set dsg_update_min_interval_s to {self.dsg_update_min_interval_s}")
 
 		# Tracking config
 		self.config.tracking.reid_weights = self.reid_weights
 		self.config.tracking.with_reid = self.with_reid
 		self.config.tracking.reid_half = self.reid_half
-		self.logger.info(f"Set reid_weights to {self.reid_weights}, with_reid to {self.with_reid}, reid_half to {self.reid_half}")
+		self.config.tracking.cmc_method = self.cmc_method
+		self.logger.info(f"Set reid_weights to {self.reid_weights}, with_reid to {self.with_reid}, reid_half to {self.reid_half}, cmc_method to {self.cmc_method}")
 
 	def _initialize_pipeline(self) -> None:
 		"""Initialize the pipeline orchestrator."""
@@ -915,8 +922,11 @@ class DaaamNode(Node):
 			timestamp = rgb_msg.header.stamp.sec + rgb_msg.header.stamp.nanosec * 1e-9
 			self._record_callback_start(timestamp, callback_start_wall)
 			
+			tracker = getattr(getattr(self, "orchestrator", None), "performance_tracker", None)
+
 			# tf2 transform (optional - can fail)
-			transform, success = self._get_camera_transform_tf2(rgb_msg.header.stamp)
+			with performance_measure("tf_lookup", self.logger.debug, tracker):
+				transform, success = self._get_camera_transform_tf2(rgb_msg.header.stamp)
 			if not success:
 				self.logger.debug("tf2 failed, continuing without transform (odometry frame unavailable)")
 				transform = None  # Will proceed without transform
@@ -934,11 +944,11 @@ class DaaamNode(Node):
 				lin_vel, ang_vel = np.zeros(3), np.zeros(3)
 
 			# RGB image
-			cv_image = self.bridge.imgmsg_to_cv2(rgb_msg, "rgb8")
-			
-			# depth image
-			depth_img = self.bridge.imgmsg_to_cv2(depth_msg, "32FC1")
-			depth_img = depth_img / self.depth_scale  # scale to meters
+			with performance_measure("image_conversion", self.logger.debug, tracker):
+				cv_image = self.bridge.imgmsg_to_cv2(rgb_msg, "rgb8")
+				# depth image
+				depth_img = self.bridge.imgmsg_to_cv2(depth_msg, "32FC1")
+				depth_img = depth_img / self.depth_scale  # scale to meters
 
 			# Extract camera intrinsics if available
 			camera_intrinsics = None
@@ -962,7 +972,6 @@ class DaaamNode(Node):
 			)
 			
 			# Process frame through pipeline (include in performance tracking)
-			tracker = self.orchestrator.performance_tracker if hasattr(self.orchestrator, 'performance_tracker') else None
 			with performance_measure("process_frame", self.logger.info, tracker):
 				label_image, color_image = self.orchestrator.process_frame(frame)
 
@@ -1035,6 +1044,9 @@ class DaaamNode(Node):
 
 	def dsg_callback(self, msg: DsgUpdate) -> None:
 		"""Process DSG updates using scene graph service async interface."""
+		# the count of this statistic = number of graph updates Hydra delivered
+		tracker = getattr(getattr(self, "orchestrator", None), "performance_tracker", None)
+		t0_ns = time.perf_counter_ns()
 		try:
 			if hasattr(self.orchestrator, 'scene_graph_service'):
 				# async
@@ -1056,6 +1068,9 @@ class DaaamNode(Node):
 		except Exception as e:
 			self.logger.error(f"Error in DSG callback: {e}")
 			traceback.print_exc()
+		finally:
+			if tracker is not None:
+				tracker.record("dsg_callback", time.perf_counter_ns() - t0_ns)
 
 	def _publish_segmentation_results(
 		self, 
@@ -1204,6 +1219,10 @@ class DaaamNode(Node):
 			if not hasattr(self.orchestrator, 'scene_graph_service'):
 				return
 			
+			# ~10 MB per message: skip the serialisation when nobody subscribes
+			if self.corrected_dsg_publisher.get_subscription_count() == 0:
+				return
+
 			latest_dsg = self.orchestrator.scene_graph_service.get_latest_corrected_dsg()
 			if latest_dsg is None:
 				return
