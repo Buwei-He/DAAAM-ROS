@@ -41,6 +41,7 @@ from daaam.human_reason.human_clip_recorder import (
 	HumanClipArtifact,
 	HumanClipRecorder,
 	HumanClipRecorderConfig,
+	SharedPersonTrigger,
 )
 from daaam.human_reason import process_clip as _hoi_process_clip
 from daaam.human_reason.clip_processor import PASS1_INPUTS, pass1_stream_factory
@@ -219,6 +220,8 @@ class DaaamNode(Node):
 		# 0.0 leaves clips unbounded, which is what the paper recorder did.
 		self.declare_parameter("human_clip_max_clip_sec", 8.0)
 		self.declare_parameter("egocentric", False)
+		self.declare_parameter("human_mask_policy", "keep")  # keep | override | tag (experiments/human-mask-policy)
+		self.declare_parameter("human_clip_trigger", "detector")  # detector (recorder's own YOLO) | shared (pipeline's person segmenter)
 		self.declare_parameter("enable_cosmos_hoi_processing", False)
 		self.declare_parameter("cosmos_hoi_base_url", "http://localhost:8000/v1")
 		self.declare_parameter("cosmos_hoi_model", "cosmos-reason2")
@@ -358,6 +361,10 @@ class DaaamNode(Node):
 			"human_clip_max_clip_sec"
 		).get_parameter_value().double_value
 		self.egocentric = self.get_parameter("egocentric").get_parameter_value().bool_value
+		self.human_mask_policy = self.get_parameter("human_mask_policy").get_parameter_value().string_value
+		self.human_clip_trigger = self.get_parameter("human_clip_trigger").get_parameter_value().string_value
+		if self.human_clip_trigger not in ("detector", "shared"):
+			raise ValueError(f"human_clip_trigger must be detector or shared, got '{self.human_clip_trigger}'")
 		self.enable_cosmos_hoi_processing = self.get_parameter(
 			"enable_cosmos_hoi_processing"
 		).get_parameter_value().bool_value
@@ -681,6 +688,11 @@ class DaaamNode(Node):
 		self.config.tracking.with_reid = self.with_reid
 		self.config.tracking.reid_half = self.reid_half
 		self.config.tracking.cmc_method = self.cmc_method
+		# Human masks: validated by HumanMaskConfig; the shared clip trigger needs the person call every frame
+		self.config.human_mask.policy = self.human_mask_policy
+		self.config.human_mask.always_run_person_segmentation = (self.human_clip_trigger == "shared")
+		self.config.human_mask.__post_init__()
+		self.logger.info(f"Set human_mask_policy to {self.human_mask_policy}, human_clip_trigger to {self.human_clip_trigger}")
 		self.logger.info(f"Set reid_weights to {self.reid_weights}, with_reid to {self.with_reid}, reid_half to {self.reid_half}, cmc_method to {self.cmc_method}")
 
 	def _initialize_pipeline(self) -> None:
@@ -757,12 +769,17 @@ class DaaamNode(Node):
 				f"Cosmos HOI latency options: pass1_input={self.cosmos_hoi_pass1_input} "
 				f"early_pass2={self.cosmos_hoi_early_pass2} video_sampling={self.cosmos_hoi_video_sampling}"
 			)
+		trigger = None
+		if self.human_clip_trigger == "shared":
+			trigger = SharedPersonTrigger(getattr(self.orchestrator, "person_segmentation_service", None), self.logger)
+			self.logger.info("Human clip trigger: shared person segmenter (no separate YOLO detector)")
 		self.human_clip_recorder = HumanClipRecorder(
 			config=recorder_config,
 			output_dir=self.orchestrator.output_dir,
 			logger=self.logger,
 			on_clip_finalized=self._handle_human_clip_finalized,
 			clip_stream_factory=clip_stream_factory,
+			trigger=trigger,
 		)
 		# clip_trigger / clip_frame_handling in performance_statistics.csv
 		self.human_clip_recorder.performance_tracker = getattr(self.orchestrator, "performance_tracker", None)
@@ -1287,6 +1304,8 @@ class DaaamNode(Node):
 					semantic_id=int(object_labels.get(track_id, -1)),
 					bbox_xyxy=bbox_xyxy,
 					segmentation_contours=segmentation_contours,
+					is_person=bool(getattr(track, "is_person", False)),
+					is_person_fragment=bool(getattr(track, "is_person_fragment", False)),
 				)
 			)
 		return observations

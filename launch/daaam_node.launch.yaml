@@ -39,6 +39,8 @@ launch:
   - arg: {name: defer_dsg_processing, default: 'false', description: Defer DSG processing until shutdown for performance}
   - arg: {name: dsg_update_min_interval_s, default: '0.0', description: 'min seconds between Hydra graph updates processed by the node (newest wins); 0 = every update'}
   - arg: {name: cmc_method, default: ecc, description: 'BoT-SORT camera motion compensation: ecc | orb | sof | sift | none'}
+  - arg: {name: human_mask_policy, default: keep, description: 'person masks: keep | override | tag (experiments/human-mask-policy)'}
+  - arg: {name: human_clip_trigger, default: detector, description: 'clip recorder trigger: detector (own YOLO) | shared (pipeline person segmenter)'}
 
   # Worker-specific parameters
   - arg: {name: min_obs_per_track, default: '6'}
@@ -144,6 +146,8 @@ launch:
         - {name: defer_dsg_processing, value: $(var defer_dsg_processing)}
         - {name: dsg_update_min_interval_s, value: $(var dsg_update_min_interval_s)}
         - {name: cmc_method, value: $(var cmc_method)}
+        - {name: human_mask_policy, value: $(var human_mask_policy)}
+        - {name: human_clip_trigger, value: $(var human_clip_trigger)}
 
         
         # Worker-specific parameters
