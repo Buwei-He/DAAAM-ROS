@@ -2,6 +2,7 @@
 # python 3.10
 import rclpy # type: ignore
 from rclpy.node import Node # type: ignore
+from rclpy.executors import SingleThreadedExecutor, ExternalShutdownException
 from cv_bridge import CvBridge  # type: ignore
 from sensor_msgs.msg import Image, CameraInfo  # type: ignore
 from std_msgs.msg import String  # type: ignore
@@ -763,6 +764,8 @@ class DaaamNode(Node):
 			on_clip_finalized=self._handle_human_clip_finalized,
 			clip_stream_factory=clip_stream_factory,
 		)
+		# clip_trigger / clip_frame_handling in performance_statistics.csv
+		self.human_clip_recorder.performance_tracker = getattr(self.orchestrator, "performance_tracker", None)
 
 	def _initialize_ros_components(self) -> None:
 		"""Initialize ROS publishers, subscribers, and other components."""
@@ -896,7 +899,23 @@ class DaaamNode(Node):
 
 		# TF2 
 		self.tf_buffer = Buffer()
-		self.tf_listener = TransformListener(self.tf_buffer, self)
+		# The listener gets its own node and executor thread. On this node's executor /tf is
+		# consumed in lockstep with the image callbacks, so the buffer's newest transform was
+		# always one frame behind the frame being processed: every exact-stamp lookup spun to
+		# its timeout (22 ms/frame) and the frame got the previous frame's pose - harmless on a
+		# fixed camera, wrong on a moving robot (pipeline-speed, 2026-10-07). TransformListener's
+		# own spin_thread option spins this whole node on a second executor, so not that.
+		self._tf_node = rclpy.create_node("daaam_tf_listener", context=self.context)
+		self.tf_listener = TransformListener(self.tf_buffer, self._tf_node)
+		self._tf_executor = SingleThreadedExecutor(context=self.context)
+		self._tf_executor.add_node(self._tf_node)
+		def _spin_tf() -> None:
+			try:
+				self._tf_executor.spin()
+			except ExternalShutdownException:
+				pass  # ctrl-c / launch shutdown: the context is gone, nothing to report
+		self._tf_thread = threading.Thread(target=_spin_tf, name="tf_listener", daemon=True)
+		self._tf_thread.start()
 		self.world_frame = self.get_parameter("world_frame").value
 		self.camera_frame = self.get_parameter("camera_frame").value
 		self.tf_timeout = self.get_parameter("tf_timeout").value
@@ -1502,6 +1521,13 @@ class DaaamNode(Node):
 
 	def destroy_node(self) -> None:
 		"""Cleanup when node is destroyed."""
+		tf_executor = getattr(self, "_tf_executor", None)
+		if tf_executor is not None:
+			try:
+				tf_executor.shutdown(timeout_sec=1.0)
+				self._tf_node.destroy_node()
+			except Exception as tf_err:
+				self.logger.debug(f"TF listener shutdown: {tf_err}")
 		print("[Shutdown] Shutting down MMLLM Grounded SAM Node")
 
 		# Stop live publishing before shutdown post-processing. orchestrator.stop()
@@ -1614,14 +1640,16 @@ class DaaamNode(Node):
 
 	def _get_camera_transform_tf2(self, timestamp):
 		"""Get camera transform using tf2."""
+		tracker = getattr(getattr(self, "orchestrator", None), "performance_tracker", None)
 		try:
 			# try with the exact timestamp
-			transform = self.tf_buffer.lookup_transform(
-				self.world_frame,
-				self.camera_frame,
-				timestamp,
-				timeout=rclpy.duration.Duration(seconds=self.tf_timeout)
-			)
+			with performance_measure("tf_lookup_exact", self.logger.debug, tracker):
+				transform = self.tf_buffer.lookup_transform(
+					self.world_frame,
+					self.camera_frame,
+					timestamp,
+					timeout=rclpy.duration.Duration(seconds=self.tf_timeout)
+				)
 			
 			pos = transform.transform.translation
 			quat = transform.transform.rotation
@@ -1637,13 +1665,21 @@ class DaaamNode(Node):
 		except Exception as e:
 			# if exact timestamp fails, try with latest available
 			try:
-				self.logger.debug(f"tf2 exact timestamp failed, trying latest: {e}")
-				transform = self.tf_buffer.lookup_transform(
-					self.world_frame,
-					self.camera_frame,
-					rclpy.time.Time(), 
-					timeout=rclpy.duration.Duration(seconds=self.tf_timeout)
-				)
+				# A failed exact lookup means the frame gets the *latest* pose, not its own:
+				# harmless on a fixed camera, wrong on a moving robot. Say so a few times.
+				n_fail = getattr(self, "_tf_exact_fail_count", 0) + 1
+				self._tf_exact_fail_count = n_fail
+				if n_fail <= 3 or n_fail % 500 == 0:
+					self.logger.warning(f"tf2 exact-stamp lookup failed ({n_fail} so far), using latest transform instead: {e}")
+				else:
+					self.logger.debug(f"tf2 exact timestamp failed, trying latest: {e}")
+				with performance_measure("tf_lookup_latest_fallback", self.logger.debug, tracker):
+					transform = self.tf_buffer.lookup_transform(
+						self.world_frame,
+						self.camera_frame,
+						rclpy.time.Time(), 
+						timeout=rclpy.duration.Duration(seconds=self.tf_timeout)
+					)
 				
 				pos = transform.transform.translation
 				quat = transform.transform.rotation
