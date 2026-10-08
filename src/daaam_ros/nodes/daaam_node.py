@@ -199,7 +199,8 @@ class DaaamNode(Node):
 		self.declare_parameter("defer_dsg_processing", False)
 
 		# tracking parameters
-		self.declare_parameter("reid_weights", "checkpoints/reid_weights/clip_general.engine")
+		self.declare_parameter("reid_backend", "dinov2")  # BoT-SORT appearance term: dinov2 (DINOv2-B TensorRT, mask-pooled) | clip (CLIP ViT-L/14) | boxmot (upstream clip_general wrapper)
+		self.declare_parameter("reid_weights", "checkpoints/reid_weights/dinov2_b_fp16.engine")
 		self.declare_parameter("with_reid", True)
 		self.declare_parameter("reid_half", False)  # FP16 for ReID (False for CLIP models)
 		self.declare_parameter("cmc_method", "ecc")  # BoT-SORT camera motion compensation: ecc | orb | sof | sift | none
@@ -342,6 +343,7 @@ class DaaamNode(Node):
 		self.defer_dsg_processing = self.get_parameter("defer_dsg_processing").get_parameter_value().bool_value
 
 		# tracking parameters
+		self.reid_backend = self.get_parameter("reid_backend").get_parameter_value().string_value
 		self.reid_weights = self.get_parameter("reid_weights").get_parameter_value().string_value
 		self.with_reid = self.get_parameter("with_reid").get_parameter_value().bool_value
 		self.reid_half = self.get_parameter("reid_half").get_parameter_value().bool_value
@@ -493,6 +495,7 @@ class DaaamNode(Node):
 				imgsz=tuple(self.sam_imgsz) if self.sam_imgsz and len(self.sam_imgsz) == 2 else None
 			),
 			tracking=TrackingConfig(
+				reid_backend=self.reid_backend,
 				reid_weights=self.reid_weights,
 				with_reid=self.with_reid,
 				reid_half=self.reid_half,
@@ -686,6 +689,7 @@ class DaaamNode(Node):
 		self.logger.info(f"Set dsg_update_min_interval_s to {self.dsg_update_min_interval_s}")
 
 		# Tracking config
+		self.config.tracking.reid_backend = self.reid_backend
 		self.config.tracking.reid_weights = self.reid_weights
 		self.config.segmentation.color_label_image = self.publish_color_image
 		self.config.tracking.with_reid = self.with_reid
@@ -696,7 +700,7 @@ class DaaamNode(Node):
 		self.config.human_mask.always_run_person_segmentation = (self.human_clip_trigger == "shared")
 		self.config.human_mask.__post_init__()
 		self.logger.info(f"Set human_mask_policy to {self.human_mask_policy}, human_clip_trigger to {self.human_clip_trigger}")
-		self.logger.info(f"Set reid_weights to {self.reid_weights}, with_reid to {self.with_reid}, reid_half to {self.reid_half}, cmc_method to {self.cmc_method}")
+		self.logger.info(f"Set reid_backend to {self.reid_backend}, reid_weights to {self.reid_weights}, with_reid to {self.with_reid}, reid_half to {self.reid_half}, cmc_method to {self.cmc_method}")
 
 	def _initialize_pipeline(self) -> None:
 		"""Initialize the pipeline orchestrator."""

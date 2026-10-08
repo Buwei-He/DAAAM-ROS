@@ -21,6 +21,9 @@ launch:
   - arg: {name: defer_dsg_processing, default: 'true', description: Defer DSG processing until shutdown for performance}
   - arg: {name: dsg_update_min_interval_s, default: '0.0', description: 'min seconds between Hydra graph updates processed by the node (newest wins); 0 = every update'}
   - arg: {name: cmc_method, default: ecc, description: 'BoT-SORT camera motion compensation: ecc | orb | sof | sift | none (identity warp, fixed camera)'}
+  - arg: {name: reid_backend, default: dinov2, description: 'BoT-SORT appearance term: dinov2 (DINOv2-B TensorRT, mask-pooled) | clip (CLIP ViT-L/14 engine) | boxmot (upstream clip_general wrapper)'}
+  - arg: {name: reid_weights, default: 'checkpoints/reid_weights/dinov2_b_fp16.engine', description: 'engine for the backend: dinov2_b_fp16.engine | clip_l14_fp16.engine | clip_general.engine'}
+  - arg: {name: with_reid, default: 'true', description: 'appearance term on; false = IoU + Kalman only (~20 ms/frame less)'}
   - arg: {name: human_mask_policy, default: keep, description: 'person masks: keep | override | tag (experiments/human-mask-policy)'}
   - arg: {name: human_clip_trigger, default: detector, description: 'clip recorder trigger: detector (own YOLO) | shared (pipeline person segmenter)'}
 
@@ -167,8 +170,9 @@ launch:
 
         - {name: dataset_name, value: 'egg'}
 
-        - {name: reid_weights, value: 'checkpoints/reid_weights/clip_general.engine'}
-        - {name: with_reid, value: 'true'}
+        - {name: reid_backend, value: $(var reid_backend)}
+        - {name: reid_weights, value: $(var reid_weights)}
+        - {name: with_reid, value: $(var with_reid)}
         - {name: reid_half, value: 'false'}
         - {name: cmc_method, value: $(var cmc_method)}
         - {name: human_mask_policy, value: $(var human_mask_policy)}

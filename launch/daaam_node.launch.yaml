@@ -59,8 +59,9 @@ launch:
   - arg: {name: depth_ub, default: '5.0'}
 
   # Tracking arguments
-  - arg: {name: reid_weights, default: 'checkpoints/reid_weights/clip_general.engine'}
-  - arg: {name: with_reid, default: 'true'}
+  - arg: {name: reid_backend, default: dinov2, description: 'BoT-SORT appearance term: dinov2 (DINOv2-B TensorRT, mask-pooled) | clip (CLIP ViT-L/14 engine) | boxmot (upstream clip_general wrapper)'}
+  - arg: {name: reid_weights, default: 'checkpoints/reid_weights/dinov2_b_fp16.engine', description: 'engine for the backend: dinov2_b_fp16.engine | clip_l14_fp16.engine | clip_general.engine'}
+  - arg: {name: with_reid, default: 'true', description: 'appearance term on; false = IoU + Kalman only (~20 ms/frame less)'}
 
   # Debug and output arguments
   - arg: {name: enable_debug_output, default: 'true'}
@@ -168,6 +169,7 @@ launch:
         - {name: depth_ub, value: $(var depth_ub)}
 
         # Tracking
+        - {name: reid_backend, value: $(var reid_backend)}
         - {name: reid_weights, value: $(var reid_weights)}
         - {name: with_reid, value: $(var with_reid)}
 
