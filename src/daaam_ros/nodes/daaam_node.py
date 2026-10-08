@@ -184,6 +184,7 @@ class DaaamNode(Node):
 
 		# depth filtering
 		self.declare_parameter("depth_scale", 1.0) # used within node to convert depth values to m
+		self.declare_parameter("publish_color_image", False)  # colored label image for RViz only; Hydra reads the uint16 label image
 		self.declare_parameter("depth_lb", 0.25)
 		self.declare_parameter("depth_ub", 5.0)
 		self.declare_parameter("sync_tolerance", 0.033)  # sync tolerance in seconds (default 33ms for 30Hz cameras)
@@ -332,6 +333,7 @@ class DaaamNode(Node):
 
 		# depth parameters
 		self.depth_scale = self.get_parameter("depth_scale").get_parameter_value().double_value # used within node to convert depth values to m
+		self.publish_color_image = self.get_parameter("publish_color_image").get_parameter_value().bool_value
 		self.depth_lb = self.get_parameter("depth_lb").get_parameter_value().double_value
 		self.depth_ub = self.get_parameter("depth_ub").get_parameter_value().double_value
 		self.sync_tolerance = self.get_parameter("sync_tolerance").get_parameter_value().double_value
@@ -685,6 +687,7 @@ class DaaamNode(Node):
 
 		# Tracking config
 		self.config.tracking.reid_weights = self.reid_weights
+		self.config.segmentation.color_label_image = self.publish_color_image
 		self.config.tracking.with_reid = self.with_reid
 		self.config.tracking.reid_half = self.reid_half
 		self.config.tracking.cmc_method = self.cmc_method
@@ -1123,10 +1126,11 @@ class DaaamNode(Node):
 			label_msg.header = header
 			self.segmentation_publisher.publish(label_msg)
 			
-			# color image
-			color_msg = self.bridge.cv2_to_imgmsg(color_image, "rgb8")
-			color_msg.header = header
-			self.segmentation_color_publisher.publish(color_msg)
+			# color image (RViz only; empty when publish_color_image is off)
+			if color_image is not None and color_image.size:
+				color_msg = self.bridge.cv2_to_imgmsg(color_image, "rgb8")
+				color_msg.header = header
+				self.segmentation_color_publisher.publish(color_msg)
 			
 		except Exception as e:
 			self.logger.error(f"Error publishing segmentation results: {e}")

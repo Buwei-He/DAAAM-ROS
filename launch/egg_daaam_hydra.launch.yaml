@@ -16,6 +16,7 @@ launch:
   - arg: {name: exit_after_clock, default: 'true', description: shutdown hydra node after a rosbag finishes playing}
 
   - arg: {name: depth_scale, default: '1000.0', description: depth image scale factor (e.g. 1000 for mm to m)}
+  - arg: {name: publish_color_image, default: 'false', description: 'colored label image for RViz only'}
   - arg: {name: sync_tolerance, default: '0.25'}
   - arg: {name: defer_dsg_processing, default: 'true', description: Defer DSG processing until shutdown for performance}
   - arg: {name: dsg_update_min_interval_s, default: '0.0', description: 'min seconds between Hydra graph updates processed by the node (newest wins); 0 = every update'}
@@ -129,6 +130,7 @@ launch:
         - {name: segmentation_color_topic, value: $(var colored_label_topic)}
 
         - {name: depth_scale, value: $(var depth_scale)}
+        - {name: publish_color_image, value: $(var publish_color_image)}
         - {name: world_frame, value: $(var odom_frame)}
         - {name: camera_frame, value: $(var sensor_frame)}
 

@@ -10,6 +10,7 @@ launch:
 
   # ROS2 node parameters
   - arg: {name: depth_scale, default: '1.0'}
+  - arg: {name: publish_color_image, default: 'false'}  # colored label image (RViz only)
   - arg: {name: sync_tolerance, default: '0.033'} # 33ms tolerance for approx 30fps
   - arg: {name: world_frame, default: 'world'}
   - arg: {name: camera_frame, default: 'dominic/forward_link'}
@@ -125,6 +126,7 @@ launch:
 
         # ROS2 node parameters
         - {name: depth_scale, value: $(var depth_scale)}
+        - {name: publish_color_image, value: $(var publish_color_image)}
         
         # Model parameters
         - {name: agent_model_name, value: $(var agent_model_name)}
