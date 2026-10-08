@@ -45,38 +45,22 @@ from daaam.human_reason.human_clip_recorder import (
 )
 from daaam.human_reason import process_clip as _hoi_process_clip
 from daaam.human_reason.clip_processor import PASS1_INPUTS, pass1_stream_factory
-from daaam.human_reason.cosmos_client import VIDEO_SAMPLING_MODES
+from daaam.human_reason.cosmos_client import VIDEO_SAMPLING, VIDEO_SAMPLING_MODES
 from daaam.human_reason.live_query import LiveQueryBridge
 from daaam.scene_understanding.config import SceneUnderstandingConfig, ToolConfig
 from daaam.human_reason import RematchCache
 from daaam.human_reason import refresh_event_outputs as _refresh_event_outputs
 
-_HUMAN_REASON_PARAM_DEFAULTS = {
-	"save_human_clips": False,
-	"human_clip_detector_weights": "yolo11n.pt",
-	"human_clip_detector_conf": 0.25,
-	"human_clip_detector_device": None,
-	"human_clip_min_frames": 4,
-	"human_clip_output_fps": 4.0,
-	"egocentric": False,
-	"enable_cosmos_hoi_processing": False,
-	"cosmos_hoi_base_url": "http://localhost:8000/v1",
-	"cosmos_hoi_model": "cosmos-reason2",
-	"cosmos_hoi_api_key": "EMPTY",
-	"cosmos_hoi_media_root": "",
-	"cosmos_hoi_fps": 4.0,
-	"cosmos_hoi_match_iou_threshold": 0.1,
-	"cosmos_hoi_semantic_reranking": False,
-	"cosmos_hoi_video_sampling": "processor",
-	"cosmos_hoi_pass1_input": "mp4",
-	"cosmos_hoi_early_pass2": False,
-	"cosmos_hoi_stream_fps": 2.0,
-	"cosmos_hoi_stream_warmup_interval_sec": 1.0,
-	"enable_semantic_event_post_processing": True,
-	"semantic_event_output_name": "events_semantic.yaml",
-	"semantic_event_neighbor_window_sec": 8.0,
-	"semantic_event_confidence_threshold": 0.65,
-	"llm_model": "gpt-5.4-mini",
+# ROS parameters that may override pipeline_config.yaml. "" means "keep the yaml value"; the launch
+# files and percorso-demo set them per deployment (Cosmos server wiring) or per run (the switches).
+_CONFIG_OVERRIDE_PARAMS = {
+	"reid_backend": "",        # tracking.reid_backend
+	"human_mode": "",          # human.mode
+	"human_mask_policy": "",   # human.person.mask_policy
+	"cosmos_hoi_base_url": "",  # human.hoi.base_url
+	"cosmos_hoi_model": "",     # human.hoi.model
+	"cosmos_hoi_api_key": "",   # human.hoi.api_key
+	"cosmos_hoi_media_root": "",  # human.hoi.media_root
 }
 
 class DaaamNode(Node):
@@ -199,58 +183,23 @@ class DaaamNode(Node):
 		self.declare_parameter("defer_dsg_processing", False)
 
 		# tracking parameters
-		self.declare_parameter("reid_backend", "dinov2")  # BoT-SORT appearance term: dinov2 (DINOv2-B TensorRT, mask-pooled) | clip (CLIP ViT-L/14) | boxmot (upstream clip_general wrapper)
-		self.declare_parameter("reid_weights", "checkpoints/reid_weights/dinov2_b_fp16.engine")
-		self.declare_parameter("with_reid", True)
-		self.declare_parameter("reid_half", False)  # FP16 for ReID (False for CLIP models)
-		self.declare_parameter("cmc_method", "ecc")  # BoT-SORT camera motion compensation: ecc | orb | sof | sift | none
-		self.declare_parameter("dsg_update_min_interval_s", 0.0)  # min seconds between processed Hydra graph updates (0 = every update)
+		self.declare_parameter("reid_backend", "")  # tracking.reid_backend override: dinov2 | clip | boxmot | none ("" = pipeline_config)
 
 		# debug and output
 		self.declare_parameter("enable_debug_output", True)
 		self.declare_parameter("output_dir", "output")
 		self.declare_parameter("output_run_prefix", "")
-		self.declare_parameter("save_human_clips", False)
-		self.declare_parameter("human_clip_detector_weights", "yolo11n.pt")
-		self.declare_parameter("human_clip_detector_conf", 0.25)
-		self.declare_parameter("human_clip_detector_device", "")
-		self.declare_parameter("human_clip_min_frames", 4)
-		self.declare_parameter("human_clip_output_fps", 4.0)
-		# The one clip length. Clips are cut here with the person still in frame
-		# and reopen on the next one, so a clip is exactly what Pass 1 sees —
-		# there is no separate "chunk" any more. 8s matches the June egg runs.
-		# 0.0 leaves clips unbounded, which is what the paper recorder did.
-		self.declare_parameter("human_clip_max_clip_sec", 8.0)
-		self.declare_parameter("egocentric", False)
-		self.declare_parameter("human_mask_policy", "keep")  # keep | override | tag (experiments/human-mask-policy)
-		self.declare_parameter("human_clip_trigger", "detector")  # detector (recorder's own YOLO) | shared (pipeline's person segmenter)
-		self.declare_parameter("enable_cosmos_hoi_processing", False)
-		self.declare_parameter("cosmos_hoi_base_url", "http://localhost:8000/v1")
-		self.declare_parameter("cosmos_hoi_model", "cosmos-reason2")
-		self.declare_parameter("cosmos_hoi_api_key", "EMPTY")
-		self.declare_parameter("cosmos_hoi_media_root", "")
-		self.declare_parameter("cosmos_hoi_fps", 4.0)
-		self.declare_parameter("cosmos_hoi_match_iou_threshold", 0.1)
-		self.declare_parameter("cosmos_hoi_semantic_reranking", False)
-		# Latency options, all off by default; see daaam CosmosHOIConfig.
-		self.declare_parameter("cosmos_hoi_video_sampling", "processor")
-		self.declare_parameter("cosmos_hoi_pass1_input", "mp4")
-		self.declare_parameter("cosmos_hoi_early_pass2", False)
-		self.declare_parameter("cosmos_hoi_stream_fps", 2.0)
-		self.declare_parameter("cosmos_hoi_stream_warmup_interval_sec", 1.0)
-		self.declare_parameter("enable_semantic_event_post_processing", True)
-		self.declare_parameter("semantic_event_output_name", "events_semantic.yaml")
-		self.declare_parameter("semantic_event_neighbor_window_sec", 8.0)
-		self.declare_parameter("semantic_event_confidence_threshold", 0.65)
-		self.declare_parameter("llm_model", "gpt-5.4-mini")  # text LLM: event grouping, judges, /ask router default
+		self.declare_parameter("human_mode", "")  # human.mode override: robot | egocentric ("" = pipeline_config)
+		self.declare_parameter("human_mask_policy", "")  # human.person.mask_policy override: keep | override | tag ("" = pipeline_config)
+		self.declare_parameter("cosmos_hoi_base_url", "")  # human.hoi override ("" = pipeline_config)
+		self.declare_parameter("cosmos_hoi_model", "")  # human.hoi override ("" = pipeline_config)
+		self.declare_parameter("cosmos_hoi_api_key", "")  # human.hoi override ("" = pipeline_config)
+		self.declare_parameter("cosmos_hoi_media_root", "")  # human.hoi override ("" = pipeline_config)
 
 		# live HOI query (demo): reason on a rolling recent-history buffer on demand,
 		# independent of save_human_clips/enable_cosmos_hoi_processing's finalize-on-
 		# absence lifecycle. Off by default; does not affect the dataset workflows.
 		self.declare_parameter("enable_live_hoi_query", False)
-		# Whole multiple of the clip length: 5 x 8s. See the check below.
-		self.declare_parameter("live_buffer_sec", 40.0)
-		self.declare_parameter("live_snapshot_keep", 5)
 		self.declare_parameter("live_bridge_host", "0.0.0.0")
 		self.declare_parameter("live_bridge_port", 8100)
 		# Must stay below the agent's own HTTP timeout (ToolConfig.live_bridge_timeout_sec,
@@ -265,7 +214,7 @@ class DaaamNode(Node):
 		# models) at startup, an unverified-live code path, so it's opt-in only,
 		# never a silent fallback. Requires enable_live_hoi_query.
 		self.declare_parameter("enable_live_query_router", False)
-		# "" = the run's human_reason.semantic_events.llm_model / grounding.llm_base_url,
+		# "" = the run's llm_model / grounding.llm_base_url,
 		# so the live router answers with the same model as scripts/eval/run_qa.py.
 		self.declare_parameter("live_query_router_model", "")
 		self.declare_parameter("live_query_router_base_url", "")
@@ -344,79 +293,19 @@ class DaaamNode(Node):
 
 		# tracking parameters
 		self.reid_backend = self.get_parameter("reid_backend").get_parameter_value().string_value
-		self.reid_weights = self.get_parameter("reid_weights").get_parameter_value().string_value
-		self.with_reid = self.get_parameter("with_reid").get_parameter_value().bool_value
-		self.reid_half = self.get_parameter("reid_half").get_parameter_value().bool_value
-		self.cmc_method = self.get_parameter("cmc_method").get_parameter_value().string_value
-		self.dsg_update_min_interval_s = self.get_parameter("dsg_update_min_interval_s").get_parameter_value().double_value
 
 		# debug
 		self.enable_debug_output = self.get_parameter("enable_debug_output").get_parameter_value().bool_value
 		self.output_dir = Path(self.get_parameter("output_dir").get_parameter_value().string_value)
 		self.output_run_prefix = self.get_parameter("output_run_prefix").get_parameter_value().string_value
-		self.save_human_clips = self.get_parameter("save_human_clips").get_parameter_value().bool_value
-		self.human_clip_detector_weights = self.get_parameter("human_clip_detector_weights").get_parameter_value().string_value
-		self.human_clip_detector_conf = self.get_parameter("human_clip_detector_conf").get_parameter_value().double_value
-		human_clip_detector_device = self.get_parameter("human_clip_detector_device").get_parameter_value().string_value
-		self.human_clip_detector_device = human_clip_detector_device if human_clip_detector_device else None
-		self.human_clip_min_frames = self.get_parameter("human_clip_min_frames").get_parameter_value().integer_value
-		self.human_clip_output_fps = self.get_parameter("human_clip_output_fps").get_parameter_value().double_value
-		self.human_clip_max_clip_sec = self.get_parameter(
-			"human_clip_max_clip_sec"
-		).get_parameter_value().double_value
-		self.egocentric = self.get_parameter("egocentric").get_parameter_value().bool_value
+		self.human_mode = self.get_parameter("human_mode").get_parameter_value().string_value
 		self.human_mask_policy = self.get_parameter("human_mask_policy").get_parameter_value().string_value
-		self.human_clip_trigger = self.get_parameter("human_clip_trigger").get_parameter_value().string_value
-		if self.human_clip_trigger not in ("detector", "shared"):
-			raise ValueError(f"human_clip_trigger must be detector or shared, got '{self.human_clip_trigger}'")
-		self.enable_cosmos_hoi_processing = self.get_parameter(
-			"enable_cosmos_hoi_processing"
-		).get_parameter_value().bool_value
 		self.cosmos_hoi_base_url = self.get_parameter("cosmos_hoi_base_url").get_parameter_value().string_value
 		self.cosmos_hoi_model = self.get_parameter("cosmos_hoi_model").get_parameter_value().string_value
 		self.cosmos_hoi_api_key = self.get_parameter("cosmos_hoi_api_key").get_parameter_value().string_value
-		if self.enable_cosmos_hoi_processing:
-			self.logger.info(f"Cosmos HOI: url={self.cosmos_hoi_base_url} model={self.cosmos_hoi_model}")
 		self.cosmos_hoi_media_root = self.get_parameter("cosmos_hoi_media_root").get_parameter_value().string_value
-		self.cosmos_hoi_fps = self.get_parameter("cosmos_hoi_fps").get_parameter_value().double_value
-		self.cosmos_hoi_match_iou_threshold = self.get_parameter(
-			"cosmos_hoi_match_iou_threshold"
-		).get_parameter_value().double_value
-		self.cosmos_hoi_semantic_reranking = self.get_parameter(
-			"cosmos_hoi_semantic_reranking"
-		).get_parameter_value().bool_value
-		self.cosmos_hoi_video_sampling = self.get_parameter(
-			"cosmos_hoi_video_sampling"
-		).get_parameter_value().string_value
-		self.cosmos_hoi_pass1_input = self.get_parameter(
-			"cosmos_hoi_pass1_input"
-		).get_parameter_value().string_value
-		self.cosmos_hoi_early_pass2 = self.get_parameter(
-			"cosmos_hoi_early_pass2"
-		).get_parameter_value().bool_value
-		self.cosmos_hoi_stream_fps = self.get_parameter(
-			"cosmos_hoi_stream_fps"
-		).get_parameter_value().double_value
-		self.cosmos_hoi_stream_warmup_interval_sec = self.get_parameter(
-			"cosmos_hoi_stream_warmup_interval_sec"
-		).get_parameter_value().double_value
-		self.enable_semantic_event_post_processing = self.get_parameter(
-			"enable_semantic_event_post_processing"
-		).get_parameter_value().bool_value
-		self.semantic_event_output_name = self.get_parameter(
-			"semantic_event_output_name"
-		).get_parameter_value().string_value
-		self.semantic_event_neighbor_window_sec = self.get_parameter(
-			"semantic_event_neighbor_window_sec"
-		).get_parameter_value().double_value
-		self.semantic_event_confidence_threshold = self.get_parameter(
-			"semantic_event_confidence_threshold"
-		).get_parameter_value().double_value
-		self.llm_model = self.get_parameter("llm_model").get_parameter_value().string_value
 
 		self.enable_live_hoi_query = self.get_parameter("enable_live_hoi_query").get_parameter_value().bool_value
-		self.live_buffer_sec = self.get_parameter("live_buffer_sec").get_parameter_value().double_value
-		self.live_snapshot_keep = self.get_parameter("live_snapshot_keep").get_parameter_value().integer_value
 		self.live_bridge_host = self.get_parameter("live_bridge_host").get_parameter_value().string_value
 		self.live_bridge_port = self.get_parameter("live_bridge_port").get_parameter_value().integer_value
 		self.live_query_timeout_sec = self.get_parameter(
@@ -439,9 +328,6 @@ class DaaamNode(Node):
 		self.live_query_router_tools = (
 			[name.strip() for name in router_tools.split(",") if name.strip()] or None
 		)
-		self.enable_live_event_refresh = (
-			not self.defer_dsg_processing and self.enable_cosmos_hoi_processing
-		)
 		self.event_refresh_interval_sec = self.get_parameter(
 			"event_refresh_interval_sec"
 		).get_parameter_value().double_value
@@ -452,144 +338,57 @@ class DaaamNode(Node):
 		self._event_refresh_running = False
 
 	def _load_pipeline_config(self) -> None:
-		"""Load and customize pipeline configuration."""
-		try:
-			# config file if it exists, otherwise create from parameters
-			config_path = Path(ROOT_DIR) / self.pipeline_config_path
-			
-			if config_path.exists():
-				self.logger.info(f"Loading pipeline config from {config_path}")
-				self.config = PipelineConfig.from_yaml(str(config_path))
-			else:
-				self.logger.warning(f"Pipeline config file not found: {config_path}, creating from parameters")
-				self.config = self._create_config_from_parameters()
-			
-			# Use explicit human/HOI config defaults before applying ROS overrides.
-			self._apply_human_reason_config_defaults()
-			if not self.live_query_router_model:
-				self.live_query_router_model = self.llm_model
-			if self.live_query_router_base_url is None:
-				self.live_query_router_base_url = self.config.grounding.llm_base_url
-			# override with ROS parameters
-			self._override_config_with_parameters()
+		"""Load pipeline_config.yaml (the owner of the algorithm settings), apply the ROS overrides
+		(_CONFIG_OVERRIDE_PARAMS) and adopt the values this node reads at runtime."""
+		config_path = Path(ROOT_DIR) / self.pipeline_config_path
+		if not config_path.exists():
+			raise FileNotFoundError(f"pipeline config not found: {config_path}")
+		self.logger.info(f"Loading pipeline config from {config_path}")
+		self.config = PipelineConfig.from_yaml(str(config_path))
+		self._override_config_with_parameters()
+		self._adopt_config()
+		if not self.live_query_router_model:
+			self.live_query_router_model = self.llm_model
+		if self.live_query_router_base_url is None:
+			self.live_query_router_base_url = self.config.grounding.llm_base_url
 
-		except Exception as e:
-			self.logger.error(f"Failed to load pipeline config: {e}")
-			self.logger.info("Creating default configuration from ROS parameters")
-			self.config = self._create_config_from_parameters()
-
-	def _create_config_from_parameters(self) -> PipelineConfig:
-		"""Create pipeline configuration from ROS parameters."""
-		from daaam.config import (
-			SegmentationConfig, TrackingConfig, GroundingConfig,
-			WorkerConfig, DepthConfig, SceneGraphConfig,
-			HumanReasonConfig, HumanClipConfig, CosmosHOIConfig, SemanticEventConfig,
-		)
-		
-		return PipelineConfig(
-			segmentation=SegmentationConfig(
-				model_name=self.sam_model,
-				model_config_path=self.sam_model_config_path,
-				min_mask_region_area=self.min_mask_region_area,
-				polygon_epsilon_factor=self.polygon_epsilon_factor,
-				imgsz=tuple(self.sam_imgsz) if self.sam_imgsz and len(self.sam_imgsz) == 2 else None
-			),
-			tracking=TrackingConfig(
-				reid_backend=self.reid_backend,
-				reid_weights=self.reid_weights,
-				with_reid=self.with_reid,
-				reid_half=self.reid_half,
-			),
-			grounding=GroundingConfig(
-				agent_model_name=self.agent_model_name,
-				query_interval_frames=self.query_interval_frames,
-				sentence_embedding_model=self.sentence_embedding_model,
-			),
-			workers=WorkerConfig(
-				num_assignment_workers=self.num_assignment_workers,
-				num_grounding_workers=self.num_grounding_workers,
-				assignment_worker=self.assignment_worker,
-				grounding_worker=self.grounding_worker
-			),
-			depth=DepthConfig(
-				depth_lb=self.depth_lb,
-				depth_ub=self.depth_ub
-			),
-			scene_graph=SceneGraphConfig(
-				defer_dsg_processing=self.defer_dsg_processing
-			),
-			human_reason=HumanReasonConfig(
-				human_clips=HumanClipConfig(
-					enabled=self.save_human_clips,
-					detector_weights=self.human_clip_detector_weights,
-					detector_conf=self.human_clip_detector_conf,
-					detector_device=self.human_clip_detector_device,
-					min_frames=self.human_clip_min_frames,
-					output_fps=self.human_clip_output_fps,
-				),
-				cosmos_hoi=CosmosHOIConfig(
-					enabled=self.enable_cosmos_hoi_processing,
-					base_url=self.cosmos_hoi_base_url,
-					model=self.cosmos_hoi_model,
-					api_key=self.cosmos_hoi_api_key,
-					media_root=self.cosmos_hoi_media_root,
-					fps=self.cosmos_hoi_fps,
-					match_iou_threshold=self.cosmos_hoi_match_iou_threshold,
-				),
-				semantic_events=SemanticEventConfig(
-					enabled=self.enable_semantic_event_post_processing,
-					output_name=self.semantic_event_output_name,
-					neighbor_window_sec=self.semantic_event_neighbor_window_sec,
-					confidence_threshold=self.semantic_event_confidence_threshold,
-				),
-			),
-			semantic_config_path=self.semantic_config_path,
-			labelspace_colors_path=self.labelspace_colors_path,
-			output_dir=str(self.output_dir),
-			output_run_prefix=str(self.output_run_prefix)
-		)
-
-	def _use_config_default(self, attr_name: str, config_value) -> None:
-		if getattr(self, attr_name) == _HUMAN_REASON_PARAM_DEFAULTS[attr_name]:
-			setattr(self, attr_name, config_value)
-
-	def _apply_human_reason_config_defaults(self) -> None:
-		"""Use pipeline_config human_reason values unless ROS params override them."""
-		human_reason = getattr(self.config, "human_reason", None)
-		if human_reason is None:
-			return
-
-		self._use_config_default("egocentric", human_reason.egocentric)
-
-		human_clips = human_reason.human_clips
-		self._use_config_default("save_human_clips", human_clips.enabled)
-		self._use_config_default("human_clip_detector_weights", human_clips.detector_weights)
-		self._use_config_default("human_clip_detector_conf", human_clips.detector_conf)
-		self._use_config_default("human_clip_detector_device", human_clips.detector_device)
-		self._use_config_default("human_clip_min_frames", human_clips.min_frames)
-		self._use_config_default("human_clip_output_fps", human_clips.output_fps)
-
-		cosmos_hoi = human_reason.cosmos_hoi
-		self._use_config_default("enable_cosmos_hoi_processing", cosmos_hoi.enabled)
-		self._use_config_default("cosmos_hoi_base_url", cosmos_hoi.base_url)
-		self._use_config_default("cosmos_hoi_model", cosmos_hoi.model)
-		self._use_config_default("cosmos_hoi_api_key", cosmos_hoi.api_key)
-		self._use_config_default("cosmos_hoi_media_root", cosmos_hoi.media_root)
-		self._use_config_default("cosmos_hoi_fps", cosmos_hoi.fps)
-		self._use_config_default("cosmos_hoi_match_iou_threshold", cosmos_hoi.match_iou_threshold)
-		self._use_config_default("cosmos_hoi_semantic_reranking", cosmos_hoi.semantic_reranking)
-		self._use_config_default("cosmos_hoi_video_sampling", cosmos_hoi.video_sampling)
-		self._use_config_default("cosmos_hoi_pass1_input", cosmos_hoi.pass1_input)
-		self._use_config_default("cosmos_hoi_early_pass2", cosmos_hoi.early_pass2)
-		self._use_config_default("cosmos_hoi_stream_fps", cosmos_hoi.stream_fps)
-		self._use_config_default("cosmos_hoi_stream_warmup_interval_sec", cosmos_hoi.stream_warmup_interval_sec)
-
-		semantic_events = human_reason.semantic_events
-		self._use_config_default("enable_semantic_event_post_processing", semantic_events.enabled)
-		self._use_config_default("semantic_event_output_name", semantic_events.output_name)
-		self._use_config_default("semantic_event_neighbor_window_sec", semantic_events.neighbor_window_sec)
-		self._use_config_default("semantic_event_confidence_threshold", semantic_events.confidence_threshold)
-		self._use_config_default("llm_model", semantic_events.llm_model)
+	def _adopt_config(self) -> None:
+		"""The node's runtime attributes, read from the (overridden) config in one place."""
+		human = self.config.human
+		self.egocentric = human.egocentric
+		self.human_clip_min_frames = max(1, int(round(human.clips.min_clip_sec * human.clips.fps)))
+		self.human_clip_output_fps = human.clips.fps
+		self.human_clip_max_clip_sec = human.clips.clip_sec
+		self.human_clip_context_sec = human.clips.overlap_sec
+		self.live_buffer_sec = human.clips.live_buffer_sec
+		self.live_snapshot_keep = human.clips.live_snapshot_keep
+		self.enable_cosmos_hoi_processing = human.hoi.enabled
+		self.cosmos_hoi_base_url = human.hoi.base_url
+		self.cosmos_hoi_model = human.hoi.model
+		self.cosmos_hoi_api_key = human.hoi.api_key
+		self.cosmos_hoi_media_root = human.hoi.media_root
+		self.cosmos_hoi_video_sampling = VIDEO_SAMPLING  # one vLLM request shape gives 4 fps on both Cosmos servers
+		self.cosmos_hoi_fps = human.clips.fps  # one rate: the recorded clip and Cosmos's video sampling
+		self.cosmos_hoi_pass1_input = human.hoi.input
+		self.cosmos_hoi_early_pass2 = human.hoi.early_grounding
+		self.cosmos_hoi_semantic_reranking = human.hoi.semantic_reranking
+		self.cosmos_hoi_match_iou_threshold = human.linking.match_iou_threshold
+		self.enable_semantic_event_post_processing = human.events.enabled
+		self.semantic_event_output_name = human.events.output_name
+		self.semantic_event_neighbor_window_sec = human.events.neighbor_window_sec
+		self.semantic_event_confidence_threshold = human.events.confidence_threshold
+		self.llm_model = self.config.llm_model
+		# Clips are recorded for their own sake, for Cosmos HOI, or for the live query buffer. The
+		# orchestrator reads clips.enabled to decide whether the person segmenter (robot mode's clip
+		# trigger) runs, so the decision is written back before the pipeline is built.
+		self.save_human_clips = human.clips.enabled
+		self.human_clip_recording_enabled = human.clips.enabled or human.hoi.enabled or self.enable_live_hoi_query
+		human.clips.enabled = self.human_clip_recording_enabled
+		self.enable_live_event_refresh = not self.defer_dsg_processing and self.enable_cosmos_hoi_processing
+		if self.enable_cosmos_hoi_processing:
+			self.logger.info(f"Cosmos HOI: url={self.cosmos_hoi_base_url} model={self.cosmos_hoi_model} "
+							 f"sampling={self.cosmos_hoi_video_sampling} input={self.cosmos_hoi_pass1_input} "
+							 f"early_grounding={self.cosmos_hoi_early_pass2}")
 
 	def _check_cosmos_hoi_modes(self) -> None:
 		"""Refuse unknown mode names at startup. Outside _load_pipeline_config's
@@ -598,8 +397,7 @@ class DaaamNode(Node):
 			raise ValueError(f"cosmos_hoi_video_sampling must be one of {VIDEO_SAMPLING_MODES}, "
 							 f"not {self.cosmos_hoi_video_sampling!r}")
 		if self.cosmos_hoi_pass1_input not in PASS1_INPUTS:
-			raise ValueError(f"cosmos_hoi_pass1_input must be one of {PASS1_INPUTS}, "
-							 f"not {self.cosmos_hoi_pass1_input!r}")
+			raise ValueError(f"human.hoi.input must be one of {PASS1_INPUTS}, not {self.cosmos_hoi_pass1_input!r}")
 
 	def _override_config_with_parameters(self) -> None:
 		"""Override configuration with ROS parameters."""
@@ -662,45 +460,26 @@ class DaaamNode(Node):
 		self.logger.info(f"Set selectframe_clip_backend to {self.selectframe_clip_backend}")
 		self.logger.info(f"Set selectframe_clip_model_name to {self.selectframe_clip_model_name}")
 
-		# Human reasoning config
-		self.config.human_reason.human_clips.enabled = self.save_human_clips
-		self.config.human_reason.human_clips.detector_weights = self.human_clip_detector_weights
-		self.config.human_reason.human_clips.detector_conf = self.human_clip_detector_conf
-		self.config.human_reason.human_clips.detector_device = self.human_clip_detector_device
-		self.config.human_reason.human_clips.min_frames = self.human_clip_min_frames
-		self.config.human_reason.human_clips.output_fps = self.human_clip_output_fps
-		self.config.human_reason.egocentric = self.egocentric
-		self.config.human_reason.cosmos_hoi.enabled = self.enable_cosmos_hoi_processing
-		self.config.human_reason.cosmos_hoi.base_url = self.cosmos_hoi_base_url
-		self.config.human_reason.cosmos_hoi.model = self.cosmos_hoi_model
-		self.config.human_reason.cosmos_hoi.api_key = self.cosmos_hoi_api_key
-		self.config.human_reason.cosmos_hoi.media_root = self.cosmos_hoi_media_root
-		self.config.human_reason.cosmos_hoi.fps = self.cosmos_hoi_fps
-		self.config.human_reason.cosmos_hoi.match_iou_threshold = self.cosmos_hoi_match_iou_threshold
-		self.config.human_reason.cosmos_hoi.semantic_reranking = self.cosmos_hoi_semantic_reranking
-		self.config.human_reason.semantic_events.enabled = self.enable_semantic_event_post_processing
-		self.config.human_reason.semantic_events.output_name = self.semantic_event_output_name
-		self.config.human_reason.semantic_events.neighbor_window_sec = self.semantic_event_neighbor_window_sec
-		self.config.human_reason.semantic_events.confidence_threshold = self.semantic_event_confidence_threshold
-
 		self.config.scene_graph.defer_dsg_processing = self.defer_dsg_processing
 		self.logger.info(f"Set defer_dsg_processing to {self.defer_dsg_processing}")
-		self.config.scene_graph.dsg_update_min_interval_s = self.dsg_update_min_interval_s
-		self.logger.info(f"Set dsg_update_min_interval_s to {self.dsg_update_min_interval_s}")
-
-		# Tracking config
-		self.config.tracking.reid_backend = self.reid_backend
-		self.config.tracking.reid_weights = self.reid_weights
 		self.config.segmentation.color_label_image = self.publish_color_image
-		self.config.tracking.with_reid = self.with_reid
-		self.config.tracking.reid_half = self.reid_half
-		self.config.tracking.cmc_method = self.cmc_method
-		# Human masks: validated by HumanMaskConfig; the shared clip trigger needs the person call every frame
-		self.config.human_mask.policy = self.human_mask_policy
-		self.config.human_mask.always_run_person_segmentation = (self.human_clip_trigger == "shared")
-		self.config.human_mask.__post_init__()
-		self.logger.info(f"Set human_mask_policy to {self.human_mask_policy}, human_clip_trigger to {self.human_clip_trigger}")
-		self.logger.info(f"Set reid_backend to {self.reid_backend}, reid_weights to {self.reid_weights}, with_reid to {self.with_reid}, reid_half to {self.reid_half}, cmc_method to {self.cmc_method}")
+
+		# Per-run switches and server wiring (_CONFIG_OVERRIDE_PARAMS); "" keeps the yaml value
+		human = self.config.human
+		overrides = {
+			"tracking.reid_backend": (self.reid_backend, self.config.tracking, "reid_backend"),
+			"human.mode": (self.human_mode, human, "mode"),
+			"human.person.mask_policy": (self.human_mask_policy, human.person, "mask_policy"),
+			"human.hoi.base_url": (self.cosmos_hoi_base_url, human.hoi, "base_url"),
+			"human.hoi.model": (self.cosmos_hoi_model, human.hoi, "model"),
+			"human.hoi.api_key": (self.cosmos_hoi_api_key, human.hoi, "api_key"),
+			"human.hoi.media_root": (self.cosmos_hoi_media_root, human.hoi, "media_root"),
+		}
+		for key, (value, target, attr) in overrides.items():
+			if value != "":
+				setattr(target, attr, value)
+				self.logger.info(f"ROS parameter overrides {key} = {value!r}")
+		human.__post_init__()  # re-validate the modes after the overrides
 
 	def _initialize_pipeline(self) -> None:
 		"""Initialize the pipeline orchestrator."""
@@ -717,9 +496,6 @@ class DaaamNode(Node):
 	def _initialize_optional_recorders(self) -> None:
 		"""Initialize optional video recorders."""
 		self.human_clip_recorder = None
-		self.human_clip_recording_enabled = (
-			self.save_human_clips or self.enable_cosmos_hoi_processing or self.enable_live_hoi_query
-		)
 		if not self.human_clip_recording_enabled:
 			return
 		if self.enable_live_hoi_query and not (self.save_human_clips or self.enable_cosmos_hoi_processing):
@@ -729,12 +505,10 @@ class DaaamNode(Node):
 
 		recorder_config = HumanClipRecorderConfig(
 			enabled=self.human_clip_recording_enabled,
-			detector_weights=self.human_clip_detector_weights,
-			detector_conf=self.human_clip_detector_conf,
-			detector_device=self.human_clip_detector_device,
 			min_clip_frames=self.human_clip_min_frames,
 			output_fps=self.human_clip_output_fps,
 			max_clip_sec=self.human_clip_max_clip_sec,
+			context_sec=self.human_clip_context_sec,
 			egocentric=self.egocentric,
 			enable_live_buffer=self.enable_live_hoi_query,
 			live_buffer_sec=self.live_buffer_sec,
@@ -758,28 +532,16 @@ class DaaamNode(Node):
 				)
 
 		clip_stream_factory = None
-		if self.enable_cosmos_hoi_processing and self.cosmos_hoi_pass1_input == "stream":
+		if self.enable_cosmos_hoi_processing and self.cosmos_hoi_pass1_input == "prefilled_frames":
 			clip_stream_factory = pass1_stream_factory(
 				self.cosmos_hoi_base_url, self.cosmos_hoi_model, self.cosmos_hoi_api_key,
 				max_clip_sec=self.human_clip_max_clip_sec,
-				fps=self.cosmos_hoi_stream_fps,
-				warmup_interval_sec=self.cosmos_hoi_stream_warmup_interval_sec,
 			)
-			self.logger.info(
-				f"Pass 1 input: stream, prefilled while recording at {self.cosmos_hoi_stream_fps:.1f} fps"
-			)
-		if self.enable_cosmos_hoi_processing and (
-			self.cosmos_hoi_pass1_input != "mp4" or self.cosmos_hoi_early_pass2
-			or self.cosmos_hoi_video_sampling != "processor"
-		):
-			self.logger.info(
-				f"Cosmos HOI latency options: pass1_input={self.cosmos_hoi_pass1_input} "
-				f"early_pass2={self.cosmos_hoi_early_pass2} video_sampling={self.cosmos_hoi_video_sampling}"
-			)
+			self.logger.info("Pass 1 input: prefilled_frames (stills streamed to Cosmos while the clip records)")
 		trigger = None
-		if self.human_clip_trigger == "shared":
+		if not self.egocentric:
 			trigger = SharedPersonTrigger(getattr(self.orchestrator, "person_segmentation_service", None), self.logger)
-			self.logger.info("Human clip trigger: shared person segmenter (no separate YOLO detector)")
+			self.logger.info("Human clip trigger: the pipeline's person segmenter")
 		self.human_clip_recorder = HumanClipRecorder(
 			config=recorder_config,
 			output_dir=self.orchestrator.output_dir,
@@ -1330,7 +1092,7 @@ class DaaamNode(Node):
 			if artifact.pass1_stream is not None:
 				artifact.pass1_stream.close()
 			return
-		if self.cosmos_hoi_pass1_input == "stream" and artifact.pass1_stream is None:
+		if self.cosmos_hoi_pass1_input == "prefilled_frames" and artifact.pass1_stream is None:
 			# The stream failed during recording (the recorder logged why). No
 			# silent switch to the MP4: that would be a different Pass 1 input.
 			self.logger.error(
@@ -1383,12 +1145,12 @@ class DaaamNode(Node):
 		"""
 		from daaam.human_reason.label_similarity import LabelScorer
 
-		semantic = self.config.human_reason.semantic_events
-		LabelScorer.configure(semantic.link_judge, model_name=semantic.link_judge_model)
+		linking = self.config.human.linking
+		LabelScorer.configure(linking.judge, model_name=linking.judge_model, accept_threshold=linking.accept_threshold)
 		router_agent = getattr(getattr(self, "live_query_bridge", None), "router_agent", None)
-		shareable = (router_agent is not None and semantic.link_judge == "sentence"
-		             and (not semantic.link_judge_model
-		                  or router_agent.sentence_handler.model_name == semantic.link_judge_model))
+		shareable = (router_agent is not None and linking.judge == "embedding"
+		             and (not linking.judge_model
+		                  or router_agent.sentence_handler.model_name == linking.judge_model))
 		if shareable:
 			LabelScorer.use_handler(router_agent.sentence_handler)
 			self.logger.info("Event refresh shares the /ask router's sentence-embedding model")
@@ -1416,8 +1178,9 @@ class DaaamNode(Node):
 			semantic_output_name=self.semantic_event_output_name,
 			neighbor_window_sec=self.semantic_event_neighbor_window_sec,
 			confidence_threshold=self.semantic_event_confidence_threshold,
-			link_judge=self.config.human_reason.semantic_events.link_judge,
-			link_judge_model=self.config.human_reason.semantic_events.link_judge_model,
+			link_judge=self.config.human.linking.judge,
+			link_judge_model=self.config.human.linking.judge_model,
+			link_accept_threshold=self.config.human.linking.accept_threshold,
 			rematch_cache=rematch_cache,
 			logger=self.logger,
 		)

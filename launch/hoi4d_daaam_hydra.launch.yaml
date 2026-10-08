@@ -63,29 +63,12 @@ launch:
   - arg: {name: zmq_url, default: 'tcp://127.0.0.1:8001'}
   - arg: {name: zmq_send_mesh, default: 'false'}
   - arg: {name: output_run_prefix, default: ''}
-  - arg: {name: save_human_clips, default: 'false'}
-  - arg: {name: human_clip_detector_weights, default: 'yolo11n.pt'}
   # Ego-centric camera: bypass YOLO detection + use ego-centric HOI prompt
-  - arg: {name: egocentric, default: 'true'}
-  - arg: {name: human_clip_detector_conf, default: '0.1'}
-  - arg: {name: human_clip_detector_device, default: ''}
-  - arg: {name: human_clip_min_frames, default: '4'}
-  - arg: {name: human_clip_max_clip_sec, default: '8.0'}
-  - arg: {name: human_clip_output_fps, default: '4.0'}
-  - arg: {name: human_clip_context_sec, default: '1.0'}
-  - arg: {name: enable_cosmos_hoi_processing, default: 'false'}
-  - arg: {name: cosmos_hoi_base_url, default: 'http://localhost:8000/v1'}
-  - arg: {name: cosmos_hoi_model, default: 'cosmos-reason2'}
-  - arg: {name: cosmos_hoi_api_key, default: 'EMPTY'}
+  - arg: {name: human_mode, default: '', description: 'human.mode override: robot | egocentric (empty = pipeline_config)'}
+  - arg: {name: cosmos_hoi_base_url, default: ''}
+  - arg: {name: cosmos_hoi_model, default: ''}
+  - arg: {name: cosmos_hoi_api_key, default: ''}
   - arg: {name: cosmos_hoi_media_root, default: ''}
-  - arg: {name: cosmos_hoi_fps, default: '4.0'}
-  - arg: {name: cosmos_hoi_enrich_pass1_location, default: 'false'}
-  - arg: {name: cosmos_hoi_match_iou_threshold, default: '0.1'}
-  - arg: {name: cosmos_hoi_streaming, default: 'false'}
-  - arg: {name: enable_semantic_event_post_processing, default: 'true'}
-  - arg: {name: semantic_event_output_name, default: 'events_semantic.yaml'}
-  - arg: {name: semantic_event_neighbor_window_sec, default: '8.0'}
-  - arg: {name: semantic_event_confidence_threshold, default: '0.65'}
 
   - set_remap: {from: hydra_visualizer/dsg, to: hydra/backend/dsg}
 
@@ -134,37 +117,17 @@ launch:
 
         - {name: dataset_name, value: 'hoi4d'}
 
-        - {name: reid_weights, value: 'checkpoints/reid_weights/clip_general.engine'}
-        - {name: with_reid, value: 'true'}
-        - {name: reid_half, value: 'false'}
 
         - {name: enable_debug_output, value: 'true'}
         - {name: output_dir, value: 'output/hoi4d'}
         - {name: output_run_prefix, value: $(var output_run_prefix)}
         - {name: defer_dsg_processing, value: $(var defer_dsg_processing)}
         - {name: cuda_device, value: $(var cuda_device)}
-        - {name: save_human_clips, value: $(var save_human_clips)}
-        - {name: human_clip_detector_weights, value: $(var human_clip_detector_weights)}
-        - {name: human_clip_detector_conf, value: $(var human_clip_detector_conf)}
-        - {name: human_clip_detector_device, value: $(var human_clip_detector_device)}
-        - {name: human_clip_min_frames, value: $(var human_clip_min_frames)}
-        - {name: human_clip_max_clip_sec, value: $(var human_clip_max_clip_sec)}
-        - {name: human_clip_output_fps, value: $(var human_clip_output_fps)}
-        - {name: human_clip_context_sec, value: $(var human_clip_context_sec)}
-        - {name: egocentric, value: $(var egocentric)}
-        - {name: enable_cosmos_hoi_processing, value: $(var enable_cosmos_hoi_processing)}
+        - {name: human_mode, value: $(var human_mode)}
         - {name: cosmos_hoi_base_url, value: $(var cosmos_hoi_base_url)}
         - {name: cosmos_hoi_model, value: $(var cosmos_hoi_model)}
         - {name: cosmos_hoi_api_key, value: $(var cosmos_hoi_api_key)}
         - {name: cosmos_hoi_media_root, value: $(var cosmos_hoi_media_root)}
-        - {name: cosmos_hoi_fps, value: $(var cosmos_hoi_fps)}
-        - {name: cosmos_hoi_enrich_pass1_location, value: $(var cosmos_hoi_enrich_pass1_location)}
-        - {name: cosmos_hoi_match_iou_threshold, value: $(var cosmos_hoi_match_iou_threshold)}
-        - {name: cosmos_hoi_streaming, value: $(var cosmos_hoi_streaming)}
-        - {name: enable_semantic_event_post_processing, value: $(var enable_semantic_event_post_processing)}
-        - {name: semantic_event_output_name, value: $(var semantic_event_output_name)}
-        - {name: semantic_event_neighbor_window_sec, value: $(var semantic_event_neighbor_window_sec)}
-        - {name: semantic_event_confidence_threshold, value: $(var semantic_event_confidence_threshold)}
 
   - set_remap: {from: /hydra/meta_data_in, to: /daaam_node/semantic_updates}
 

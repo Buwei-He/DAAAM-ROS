@@ -19,13 +19,8 @@ launch:
   - arg: {name: publish_color_image, default: 'false', description: 'colored label image for RViz only'}
   - arg: {name: sync_tolerance, default: '0.25'}
   - arg: {name: defer_dsg_processing, default: 'true', description: Defer DSG processing until shutdown for performance}
-  - arg: {name: dsg_update_min_interval_s, default: '0.0', description: 'min seconds between Hydra graph updates processed by the node (newest wins); 0 = every update'}
-  - arg: {name: cmc_method, default: ecc, description: 'BoT-SORT camera motion compensation: ecc | orb | sof | sift | none (identity warp, fixed camera)'}
-  - arg: {name: reid_backend, default: dinov2, description: 'BoT-SORT appearance term: dinov2 (DINOv2-B TensorRT, mask-pooled) | clip (CLIP ViT-L/14 engine) | boxmot (upstream clip_general wrapper)'}
-  - arg: {name: reid_weights, default: 'checkpoints/reid_weights/dinov2_b_fp16.engine', description: 'engine for the backend: dinov2_b_fp16.engine | clip_l14_fp16.engine | clip_general.engine'}
-  - arg: {name: with_reid, default: 'true', description: 'appearance term on; false = IoU + Kalman only (~20 ms/frame less)'}
-  - arg: {name: human_mask_policy, default: keep, description: 'person masks: keep | override | tag (experiments/human-mask-policy)'}
-  - arg: {name: human_clip_trigger, default: detector, description: 'clip recorder trigger: detector (own YOLO) | shared (pipeline person segmenter)'}
+  - arg: {name: reid_backend, default: '', description: 'tracking.reid_backend override: dinov2 | clip | boxmot | none (empty = pipeline_config)'}
+  - arg: {name: human_mask_policy, default: '', description: 'human.person.mask_policy override: keep | override | tag (empty = pipeline_config)'}
 
   - arg: {name: robot_id, default: '0', description: unique robot identifier}
   - arg: {name: sensor_frame, default: cam0_optical_frame, description: camera optical frame}
@@ -73,47 +68,23 @@ launch:
   - arg: {name: zmq_url, default: 'tcp://127.0.0.1:8001'}
   - arg: {name: zmq_send_mesh, default: 'false'}
   - arg: {name: output_run_prefix, default: ''}
-  - arg: {name: save_human_clips, default: 'false'}
-  - arg: {name: human_clip_detector_weights, default: 'yolo11n.pt'}
-  - arg: {name: egocentric, default: 'false'}
-  - arg: {name: human_clip_detector_conf, default: '0.25'}
-  - arg: {name: human_clip_detector_device, default: ''}
-  - arg: {name: human_clip_min_frames, default: '4'}
-  - arg: {name: human_clip_max_clip_sec, default: '8.0'}
-  - arg: {name: human_clip_output_fps, default: '4.0'}
-  - arg: {name: human_clip_context_sec, default: '1.0'}
-  - arg: {name: enable_cosmos_hoi_processing, default: 'false'}
+  - arg: {name: human_mode, default: '', description: 'human.mode override: robot | egocentric (empty = pipeline_config)'}
   - arg: {name: captioner, default: '', description: "'' = pipeline_config workers.dam_grounding_config.captioner; dam | cosmos | dam+cosmos_shadow"}
   - arg: {name: cosmos_caption_region, default: '', description: "'' = pipeline_config value; box | crop | box+crop"}
-  - arg: {name: cosmos_hoi_base_url, default: 'http://localhost:8000/v1'}
-  - arg: {name: cosmos_hoi_model, default: 'cosmos-reason2'}
-  - arg: {name: cosmos_hoi_api_key, default: 'EMPTY'}
+  - arg: {name: cosmos_hoi_base_url, default: ''}
+  - arg: {name: cosmos_hoi_model, default: ''}
+  - arg: {name: cosmos_hoi_api_key, default: ''}
   - arg: {name: cosmos_hoi_media_root, default: ''}
-  - arg: {name: cosmos_hoi_fps, default: '4.0'}
-  - arg: {name: cosmos_hoi_enrich_pass1_location, default: 'false'}
-  - arg: {name: cosmos_hoi_match_iou_threshold, default: '0.1'}
-  - arg: {name: cosmos_hoi_streaming, default: 'false'}
   # Latency options (off = paper path); see daaam CosmosHOIConfig.
-  - arg: {name: cosmos_hoi_video_sampling, default: 'processor'}
-  - arg: {name: cosmos_hoi_pass1_input, default: 'mp4'}
-  - arg: {name: cosmos_hoi_early_pass2, default: 'false'}
-  - arg: {name: cosmos_hoi_stream_fps, default: '2.0'}
-  - arg: {name: cosmos_hoi_stream_warmup_interval_sec, default: '1.0'}
-  - arg: {name: enable_semantic_event_post_processing, default: 'true'}
-  - arg: {name: semantic_event_output_name, default: 'events_semantic.yaml'}
-  - arg: {name: semantic_event_neighbor_window_sec, default: '8.0'}
-  - arg: {name: semantic_event_confidence_threshold, default: '0.65'}
 
   # live demo: rolling recent-history buffer + HTTP bridge (off by default). The
   # mid-run rebuild of events.yaml has no switch of its own: it runs whenever
   # defer_dsg_processing is false and Cosmos HOI is on.
   - arg: {name: enable_live_hoi_query, default: 'false', description: rolling buffer + query bridge}
-  - arg: {name: live_buffer_sec, default: '30.0'}
-  - arg: {name: live_snapshot_keep, default: '5'}
   - arg: {name: live_bridge_host, default: '0.0.0.0'}
   - arg: {name: live_bridge_port, default: '8100'}
   - arg: {name: enable_live_query_router, default: 'false', description: 'POST /ask picks dsg/interactions/events/video itself'}
-  - arg: {name: live_query_router_model, default: '', description: "'' = human_reason.semantic_events.llm_model from pipeline_config"}
+  - arg: {name: live_query_router_model, default: '', description: "'' = llm_model from pipeline_config"}
   - arg: {name: live_query_router_base_url, default: ''}
   - arg: {name: live_query_router_api_key, default: ''}
   - arg: {name: live_query_router_max_iterations, default: '6', description: 'tool-call round-trips before forcing an answer; lower than the offline default (15) to bound live latency'}
@@ -171,49 +142,19 @@ launch:
         - {name: dataset_name, value: 'egg'}
 
         - {name: reid_backend, value: $(var reid_backend)}
-        - {name: reid_weights, value: $(var reid_weights)}
-        - {name: with_reid, value: $(var with_reid)}
-        - {name: reid_half, value: 'false'}
-        - {name: cmc_method, value: $(var cmc_method)}
         - {name: human_mask_policy, value: $(var human_mask_policy)}
-        - {name: human_clip_trigger, value: $(var human_clip_trigger)}
 
         - {name: enable_debug_output, value: 'true'}
         - {name: output_dir, value: 'output/egg'}
         - {name: output_run_prefix, value: $(var output_run_prefix)}
         - {name: defer_dsg_processing, value: $(var defer_dsg_processing)}
-        - {name: dsg_update_min_interval_s, value: $(var dsg_update_min_interval_s)}
         - {name: cuda_device, value: $(var cuda_device)}
-        - {name: save_human_clips, value: $(var save_human_clips)}
-        - {name: human_clip_detector_weights, value: $(var human_clip_detector_weights)}
-        - {name: human_clip_detector_conf, value: $(var human_clip_detector_conf)}
-        - {name: human_clip_detector_device, value: $(var human_clip_detector_device)}
-        - {name: human_clip_min_frames, value: $(var human_clip_min_frames)}
-        - {name: human_clip_max_clip_sec, value: $(var human_clip_max_clip_sec)}
-        - {name: human_clip_output_fps, value: $(var human_clip_output_fps)}
-        - {name: human_clip_context_sec, value: $(var human_clip_context_sec)}
-        - {name: egocentric, value: $(var egocentric)}
-        - {name: enable_cosmos_hoi_processing, value: $(var enable_cosmos_hoi_processing)}
+        - {name: human_mode, value: $(var human_mode)}
         - {name: cosmos_hoi_base_url, value: $(var cosmos_hoi_base_url)}
         - {name: cosmos_hoi_model, value: $(var cosmos_hoi_model)}
         - {name: cosmos_hoi_api_key, value: $(var cosmos_hoi_api_key)}
         - {name: cosmos_hoi_media_root, value: $(var cosmos_hoi_media_root)}
-        - {name: cosmos_hoi_fps, value: $(var cosmos_hoi_fps)}
-        - {name: cosmos_hoi_enrich_pass1_location, value: $(var cosmos_hoi_enrich_pass1_location)}
-        - {name: cosmos_hoi_match_iou_threshold, value: $(var cosmos_hoi_match_iou_threshold)}
-        - {name: cosmos_hoi_streaming, value: $(var cosmos_hoi_streaming)}
-        - {name: cosmos_hoi_video_sampling, value: $(var cosmos_hoi_video_sampling)}
-        - {name: cosmos_hoi_pass1_input, value: $(var cosmos_hoi_pass1_input)}
-        - {name: cosmos_hoi_early_pass2, value: $(var cosmos_hoi_early_pass2)}
-        - {name: cosmos_hoi_stream_fps, value: $(var cosmos_hoi_stream_fps)}
-        - {name: cosmos_hoi_stream_warmup_interval_sec, value: $(var cosmos_hoi_stream_warmup_interval_sec)}
-        - {name: enable_semantic_event_post_processing, value: $(var enable_semantic_event_post_processing)}
-        - {name: semantic_event_output_name, value: $(var semantic_event_output_name)}
-        - {name: semantic_event_neighbor_window_sec, value: $(var semantic_event_neighbor_window_sec)}
-        - {name: semantic_event_confidence_threshold, value: $(var semantic_event_confidence_threshold)}
         - {name: enable_live_hoi_query, value: $(var enable_live_hoi_query)}
-        - {name: live_buffer_sec, value: $(var live_buffer_sec)}
-        - {name: live_snapshot_keep, value: $(var live_snapshot_keep)}
         - {name: live_bridge_host, value: $(var live_bridge_host)}
         - {name: live_bridge_port, value: $(var live_bridge_port)}
         - {name: enable_live_query_router, value: $(var enable_live_query_router)}
