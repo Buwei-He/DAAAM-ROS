@@ -370,7 +370,6 @@ class DaaamNode(Node):
 		self.cosmos_hoi_video_sampling = VIDEO_SAMPLING  # one vLLM request shape gives 4 fps on both Cosmos servers
 		self.cosmos_hoi_fps = human.clips.fps  # one rate: the recorded clip and Cosmos's video sampling
 		self.cosmos_hoi_pass1_input = human.hoi.input
-		self.cosmos_hoi_early_pass2 = human.hoi.early_grounding
 		self.cosmos_hoi_semantic_reranking = human.hoi.semantic_reranking
 		self.cosmos_hoi_match_iou_threshold = human.linking.match_iou_threshold
 		self.enable_semantic_event_post_processing = human.events.enabled
@@ -387,8 +386,7 @@ class DaaamNode(Node):
 		self.enable_live_event_refresh = not self.defer_dsg_processing and self.enable_cosmos_hoi_processing
 		if self.enable_cosmos_hoi_processing:
 			self.logger.info(f"Cosmos HOI: url={self.cosmos_hoi_base_url} model={self.cosmos_hoi_model} "
-							 f"sampling={self.cosmos_hoi_video_sampling} input={self.cosmos_hoi_pass1_input} "
-							 f"early_grounding={self.cosmos_hoi_early_pass2}")
+							 f"sampling={self.cosmos_hoi_video_sampling} input={self.cosmos_hoi_pass1_input}")
 
 	def _check_cosmos_hoi_modes(self) -> None:
 		"""Refuse unknown mode names at startup. Outside _load_pipeline_config's
@@ -1120,7 +1118,6 @@ class DaaamNode(Node):
 					egocentric=self.egocentric,
 					video_sampling=self.cosmos_hoi_video_sampling,
 					pass1_stream=artifact.pass1_stream,
-					early_pass2=self.cosmos_hoi_early_pass2,
 				)
 				duration = time.time() - start_wall
 				self.logger.info(f"Cosmos HOI done in {duration:.1f}s: {out}")
