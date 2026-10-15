@@ -57,11 +57,8 @@ launch:
   - arg: {name: num_assignment_workers, default: ''}
   - arg: {name: num_grounding_workers, default: ''}
 
-  - arg: {name: sam_model, default: ''}
-  - arg: {name: sam_model_config_path, default: ''}
-  - arg: {name: sam_imgsz, default: ''}
-  - arg: {name: selectframe_clip_backend, default: ''}
-  - arg: {name: selectframe_clip_model_name, default: ''}
+  - arg: {name: segmenter, default: ''}
+  - arg: {name: select_frame_clip, default: ''}
   - arg: {name: cuda_device, default: '', description: 'CUDA device for grounding workers (empty=inherit env, "0", "1", etc.)'}
 
   - arg: {name: enable_zmq, default: 'false'}
@@ -69,8 +66,7 @@ launch:
   - arg: {name: zmq_send_mesh, default: 'false'}
   - arg: {name: output_run_prefix, default: ''}
   - arg: {name: human_mode, default: '', description: 'human.mode override: robot | egocentric (empty = pipeline_config)'}
-  - arg: {name: captioner, default: '', description: "'' = pipeline_config workers.dam_grounding_config.captioner; dam | cosmos | dam+cosmos_shadow"}
-  - arg: {name: cosmos_caption_region, default: '', description: "'' = pipeline_config value; box | crop | box+crop"}
+  - arg: {name: captioner, default: '', description: "'' = pipeline_config captioner: dam | cosmos | dam+cosmos_shadow"}
   - arg: {name: cosmos_hoi_base_url, default: ''}
   - arg: {name: cosmos_hoi_model, default: ''}
   - arg: {name: cosmos_hoi_api_key, default: ''}
@@ -109,11 +105,8 @@ launch:
         - {name: semantic_config, value: $(var labelspace_path)}
         - {name: labelspace_colors, value: $(var labelspace_colors)}
 
-        - {name: sam_model, value: $(var sam_model)}
-        - {name: sam_model_config_path, value: $(var sam_model_config_path)}
-        - {name: sam_imgsz, value: $(var sam_imgsz)}
+        - {name: segmenter, value: $(var segmenter)}
         - {name: captioner, value: $(var captioner)}
-        - {name: cosmos_caption_region, value: $(var cosmos_caption_region)}
 
         - {name: depth_lb, value: $(var depth_lb)}
         - {name: depth_ub, value: $(var depth_ub)}
@@ -129,8 +122,7 @@ launch:
         - {name: multi_image_min_n_masks, value: $(var multi_image_min_n_masks)}
         - {name: save_debug_data, value: 'false'}
 
-        - {name: selectframe_clip_backend, value: $(var selectframe_clip_backend)}
-        - {name: selectframe_clip_model_name, value: $(var selectframe_clip_model_name)}
+        - {name: select_frame_clip, value: $(var select_frame_clip)}
 
         - {name: dataset_name, value: 'egg'}
 

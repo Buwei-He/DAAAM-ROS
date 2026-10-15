@@ -52,11 +52,8 @@ launch:
   - arg: {name: num_assignment_workers, default: ''}
   - arg: {name: num_grounding_workers, default: ''}
 
-  - arg: {name: sam_model, default: ''}
-  - arg: {name: sam_model_config_path, default: ''}
-  - arg: {name: sam_imgsz, default: ''}
-  - arg: {name: selectframe_clip_backend, default: ''}
-  - arg: {name: selectframe_clip_model_name, default: ''}
+  - arg: {name: segmenter, default: ''}
+  - arg: {name: select_frame_clip, default: ''}
   - arg: {name: cuda_device, default: ''}
 
   - arg: {name: enable_zmq, default: 'false'}
@@ -89,9 +86,7 @@ launch:
         - {name: semantic_config, value: $(var labelspace_path)}
         - {name: labelspace_colors, value: $(var labelspace_colors)}
 
-        - {name: sam_model, value: $(var sam_model)}
-        - {name: sam_model_config_path, value: $(var sam_model_config_path)}
-        - {name: sam_imgsz, value: $(var sam_imgsz)}
+        - {name: segmenter, value: $(var segmenter)}
 
         - {name: depth_lb, value: $(var depth_lb)}
         - {name: depth_ub, value: $(var depth_ub)}
@@ -107,8 +102,7 @@ launch:
         - {name: multi_image_min_n_masks, value: $(var multi_image_min_n_masks)}
         - {name: save_debug_data, value: 'false'}
 
-        - {name: selectframe_clip_backend, value: $(var selectframe_clip_backend)}
-        - {name: selectframe_clip_model_name, value: $(var selectframe_clip_model_name)}
+        - {name: select_frame_clip, value: $(var select_frame_clip)}
 
         - {name: dataset_name, value: 'hoi4d'}
 

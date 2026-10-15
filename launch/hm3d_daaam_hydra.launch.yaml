@@ -60,8 +60,7 @@ launch:
   - arg: {name: num_grounding_workers, default: ''}
 
   # SAM model arguments (for overriding)
-  - arg: {name: sam_model, default: ''}  # TensorRT model (480wx640h)
-  - arg: {name: sam_imgsz, default: ''}  # 'height,width'; '' = pipeline_config segmentation.imgsz
+  - arg: {name: segmenter, default: ''}  # TensorRT model (480wx640h)
   
   # output
   - arg: {name: enable_zmq, default: 'false'}
@@ -95,8 +94,7 @@ launch:
         - {name: labelspace_colors, value: $(var labelspace_colors)}
 
         # Model configuration
-        - {name: sam_model, value: $(var sam_model)}
-        - {name: sam_imgsz, value: $(var sam_imgsz)}
+        - {name: segmenter, value: $(var segmenter)}
 
         # Processing parameters
         - {name: depth_lb, value: $(var depth_lb)}
@@ -115,8 +113,7 @@ launch:
         - {name: save_debug_data, value: 'false'}
         - {name: save_grounding_images, value: 'true'}
         - {name: save_object_images, value: 'true'}
-        - {name: selectframe_clip_backend, value: 'openclip'}
-        - {name: selectframe_clip_model_name, value: 'ViT-L-14'}
+        - {name: select_frame_clip, value: 'vit_l14'}
 
         - {name: dataset_name, value: 'hm3d'}
 

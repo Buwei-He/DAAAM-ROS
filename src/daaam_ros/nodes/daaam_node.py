@@ -31,6 +31,7 @@ from typing import Tuple, Optional
 import signal
 
 from daaam.pipeline import PipelineOrchestrator, PipelineConfig
+from daaam.config import clip_spec
 from daaam.pipeline.models import Frame
 from daaam.utils.logging import setup_main_logging
 from daaam.utils.performance import performance_measure, time_execution_sync 
@@ -56,23 +57,20 @@ from daaam.human_reason import refresh_event_outputs as _refresh_event_outputs
 # defaults to "" = the yaml value, so a launch file states only what its dataset or deployment needs (frame
 # sizes, server wiring) and percorso-demo only the per-run switches; a value is coerced to the attribute's type.
 _CONFIG_OVERRIDE_PARAMS = {
-	"sam_model": "segmentation.model_name",
-	"sam_model_config_path": "segmentation.model_config_path",
+	"segmenter": "segmentation.model",
 	"min_mask_region_area": ("segmentation.min_mask_region_area", "workers.assignment_config.min_mask_region_area"),
 	"max_mask_region_area": "workers.assignment_config.max_mask_region_area",
 	"polygon_epsilon_factor": "segmentation.polygon_epsilon_factor",
 	"query_interval_frames": "grounding.query_interval_frames",
 	"cuda_device": "grounding.cuda_device",
-	"sentence_embedding_model": "workers.dam_grounding_config.sentence_embedding_model_name",
-	"compute_full_image_description": "workers.dam_grounding_config.compute_full_image_description",
-	"captioner": "workers.dam_grounding_config.captioner",
-	"cosmos_caption_region": "workers.dam_grounding_config.cosmos_caption_region",
-	"multi_image_min_n_masks": "workers.dam_grounding_config.multi_image_min_n_masks",
-	"save_grounding_images": "workers.dam_grounding_config.save_grounding_images",
-	"save_plain_grounding_images": "workers.dam_grounding_config.save_plain_grounding_images",
-	"save_object_images": "workers.dam_grounding_config.save_object_images",
-	"selectframe_clip_backend": "workers.dam_grounding_config.selectframe_clip_backend",
-	"selectframe_clip_model_name": "workers.dam_grounding_config.selectframe_clip_model_name",
+	"sentence_embedding": "grounding.sentence_embedding",
+	"compute_full_image_description": "grounding.compute_full_image_description",
+	"captioner": "captioner",
+	"multi_image_min_n_masks": "grounding.multi_image_min_n_masks",
+	"save_grounding_images": "grounding.save_grounding_images",
+	"save_plain_grounding_images": "grounding.save_plain_grounding_images",
+	"save_object_images": "grounding.save_object_images",
+	"select_frame_clip": "grounding.select_frame_clip",
 	"num_assignment_workers": "workers.num_assignment_workers",
 	"num_grounding_workers": "workers.num_grounding_workers",
 	"assignment_worker": "workers.assignment_worker",
@@ -160,8 +158,6 @@ class DaaamNode(Node):
 		self.declare_parameter("semantic_config", "config/labels_pseudo.yaml")
 		self.declare_parameter("labelspace_colors", "config/labels_pseudo.csv")
 		
-		# Use string parameter for sam_imgsz, will parse it to list
-		self.declare_parameter("sam_imgsz", "")  # "height,width" (segmentation.imgsz); "" = pipeline_config
 		# pipeline_config overrides, "" = the yaml value (launch turns 'true' / '120' / '0.05' into typed values)
 		for name in _CONFIG_OVERRIDE_PARAMS:
 			self.declare_parameter(name, "", ParameterDescriptor(dynamic_typing=True))
@@ -225,16 +221,6 @@ class DaaamNode(Node):
 		self.semantic_config_path = self.get_parameter("semantic_config").get_parameter_value().string_value
 		self.labelspace_colors_path = self.get_parameter("labelspace_colors").get_parameter_value().string_value
 		
-		# Parse sam_imgsz from string (e.g., "1024,1248" -> [1024, 1248])
-		sam_imgsz_str = self.get_parameter("sam_imgsz").get_parameter_value().string_value
-		if sam_imgsz_str:
-			try:
-				self.sam_imgsz = [int(x.strip()) for x in sam_imgsz_str.split(',')]
-			except ValueError:
-				self.logger.warning(f"Invalid sam_imgsz format: {sam_imgsz_str}. Expected 'height,width' (e.g., '1248,1024')")
-				self.sam_imgsz = []
-		else:
-			self.sam_imgsz = []
 		
 		self.save_debug_data = self.get_parameter("save_debug_data").get_parameter_value().bool_value
 		self.dataset_name = self.get_parameter("dataset_name").get_parameter_value().string_value
@@ -301,8 +287,8 @@ class DaaamNode(Node):
 		"""The node's runtime attributes, read from the (overridden) config in one place."""
 		human = self.config.human
 		self.defer_dsg_processing = self.config.scene_graph.defer_dsg_processing
-		self.selectframe_clip_backend = self.config.workers.dam_grounding_config.selectframe_clip_backend
-		self.selectframe_clip_model_name = self.config.workers.dam_grounding_config.selectframe_clip_model_name
+		clip = clip_spec(self.config.grounding.select_frame_clip)
+		self.selectframe_clip_backend, self.selectframe_clip_model_name = clip["backend"], clip["model"]
 		self.egocentric = human.egocentric
 		self.human_clip_min_frames = max(1, int(round(human.clips.min_clip_sec * human.clips.fps)))
 		self.human_clip_output_fps = human.clips.fps
@@ -311,7 +297,7 @@ class DaaamNode(Node):
 		self.live_buffer_sec = human.clips.live_buffer_sec
 		self.live_snapshot_keep = human.clips.live_snapshot_keep
 		self.enable_cosmos_hoi_processing = human.hoi.enabled
-		if human.hoi.enabled or self.enable_live_hoi_query or self.config.workers.dam_grounding_config.captioner != "dam":
+		if human.hoi.enabled or self.enable_live_hoi_query or self.config.captioner != "dam":
 			self.config.resolve_cosmos()  # models.yaml vlm, unless the launch passed cosmos_hoi_base_url
 		self.cosmos_hoi_base_url = human.hoi.base_url
 		self.cosmos_hoi_model = human.hoi.model
@@ -354,8 +340,6 @@ class DaaamNode(Node):
 	def _override_config_with_parameters(self) -> None:
 		"""Apply the ROS parameters to the loaded pipeline config: the node's own wiring (paths, output dir)
 		always, the _CONFIG_OVERRIDE_PARAMS only when set (""= the yaml value)."""
-		if self.sam_imgsz and len(self.sam_imgsz) == 2:
-			self.config.segmentation.imgsz = tuple(self.sam_imgsz)
 		self.config.semantic_config_path = self.semantic_config_path
 		self.config.labelspace_colors_path = self.labelspace_colors_path
 		self.config.output_dir = str(self.output_dir)
@@ -386,8 +370,8 @@ class DaaamNode(Node):
 				setattr(target, attr, coerced)
 				self.logger.info(f"ROS parameter overrides {path} = {coerced!r}")
 		self.config.human.__post_init__()  # re-validate the modes after the overrides
-		dam = self.config.workers.dam_grounding_config
-		self.logger.info(f"Captioner: {dam.captioner} (cosmos region {dam.cosmos_caption_region})")
+		self.config.resolve_models()  # entries named by the overrides
+		self.logger.info(f"Captioner: {self.config.captioner}")
 
 	def _initialize_pipeline(self) -> None:
 		"""Initialize the pipeline orchestrator."""
@@ -1050,14 +1034,13 @@ class DaaamNode(Node):
 		router already holds the same model (both use the default), so share it;
 		otherwise load it in the background now instead of inside the first refresh.
 		"""
-		from daaam.human_reason.label_similarity import LabelScorer
+		from daaam.human_reason.label_similarity import LabelScorer, MODEL_KIND
 
 		linking = self.config.human.linking
-		LabelScorer.configure(linking.judge, model_name=linking.judge_model)
+		LabelScorer.configure(linking.model)
 		router_agent = getattr(getattr(self, "live_query_bridge", None), "router_agent", None)
-		shareable = (router_agent is not None and linking.judge == "embedding"
-		             and (not linking.judge_model
-		                  or router_agent.sentence_handler.model_name == linking.judge_model))
+		shareable = (router_agent is not None and MODEL_KIND[linking.model] == "embedding"
+		             and router_agent.sentence_handler.model_name == linking.model)
 		if shareable:
 			LabelScorer.use_handler(router_agent.sentence_handler)
 			self.logger.info("Event refresh shares the /ask router's sentence-embedding model")
@@ -1076,7 +1059,7 @@ class DaaamNode(Node):
 		from pathlib import Path as _Path
 		import os as _os
 		# resolved per refresh: a local grouping server restarted on another node is found at the next one
-		grouping_model, grouping_base_url, grouping_api_key = self.config.grouping_llm()
+		grouping_model, grouping_base_url, grouping_api_key, grouping_request = self.config.grouping_llm()
 		return _refresh_event_outputs(
 			_Path(self.orchestrator.output_dir),
 			cosmos_hoi_enabled=getattr(self, 'enable_cosmos_hoi_processing', False),
@@ -1086,13 +1069,13 @@ class DaaamNode(Node):
 			grouping_model=grouping_model,
 			grouping_base_url=grouping_base_url,
 			grouping_api_key=grouping_api_key,
+			grouping_request=grouping_request,
 			match_iou_threshold=self.cosmos_hoi_match_iou_threshold,
 			semantic_reranking=self.cosmos_hoi_semantic_reranking,
 			semantic_enabled=getattr(self, 'enable_semantic_event_post_processing', True),
 			semantic_output_name=self.semantic_event_output_name,
 			neighbor_window_sec=self.semantic_event_neighbor_window_sec,
-			link_judge=self.config.human.linking.judge,
-			link_judge_model=self.config.human.linking.judge_model,
+			link_model=self.config.human.linking.model,
 			rematch_cache=rematch_cache,
 			grouping_mode=self.config.human.events.grouping,
 			lookahead_sec=self.config.human.events.grouping_lookahead_sec,

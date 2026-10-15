@@ -21,13 +21,10 @@ launch:
   - arg: {name: labelspace_colors, default: $(find-pkg-share percorso_perception_ros)/config/labels_pseudo.csv}
 
   # Model configuration arguments
-  - arg: {name: sam_model, default: ''}
-  - arg: {name: sam_model_config_path, default: ''}
-  - arg: {name: sam_imgsz, default: ''}  # Empty string for auto, or '1024,1248' for TensorRT (height,width)
-  - arg: {name: sentence_embedding_model, default: ''} # Qwen/Qwen3-Embedding-4B
+  - arg: {name: segmenter, default: ''}
+  - arg: {name: sentence_embedding, default: ''} # Qwen/Qwen3-Embedding-4B
   - arg: {name: compute_full_image_description, default: ''}
-  - arg: {name: captioner, default: '', description: "'' = pipeline_config workers.dam_grounding_config.captioner; dam | cosmos | dam+cosmos_shadow"}
-  - arg: {name: cosmos_caption_region, default: '', description: "'' = pipeline_config value; box | crop | box+crop"}
+  - arg: {name: captioner, default: '', description: "'' = pipeline_config captioner: dam | cosmos | dam+cosmos_shadow"}
 
   # Processing parameters
   - arg: {name: query_interval_frames, default: ''}
@@ -46,8 +43,7 @@ launch:
   - arg: {name: save_grounding_images, default: ''}
   - arg: {name: save_plain_grounding_images, default: ''}
   - arg: {name: save_object_images, default: ''}
-  - arg: {name: selectframe_clip_backend, default: ''}  # "openclip" or "pe" (Perception Encoder)
-  - arg: {name: selectframe_clip_model_name, default: ''}  # Model name for CLIP backend
+  - arg: {name: select_frame_clip, default: ''}  # "openclip" or "pe" (Perception Encoder)
   - arg: {name: cuda_device, default: '', description: 'CUDA device for grounding workers (empty=inherit env, "0", "1", etc.)'}
 
   # Depth filtering arguments
@@ -98,13 +94,10 @@ launch:
         - {name: publish_color_image, value: $(var publish_color_image)}
         
         # Model parameters
-        - {name: sam_model, value: $(var sam_model)}
-        - {name: sam_model_config_path, value: $(var sam_model_config_path)}
-        - {name: sam_imgsz, value: $(var sam_imgsz)}
-        - {name: sentence_embedding_model, value: $(var sentence_embedding_model)}
+        - {name: segmenter, value: $(var segmenter)}
+        - {name: sentence_embedding, value: $(var sentence_embedding)}
         - {name: compute_full_image_description, value: $(var compute_full_image_description)}
         - {name: captioner, value: $(var captioner)}
-        - {name: cosmos_caption_region, value: $(var cosmos_caption_region)}
 
         # Processing parameters
         - {name: query_interval_frames, value: $(var query_interval_frames)}
@@ -124,8 +117,7 @@ launch:
         - {name: save_grounding_images, value: $(var save_grounding_images)}
         - {name: save_plain_grounding_images, value: $(var save_plain_grounding_images)}
         - {name: save_object_images, value: $(var save_object_images)}
-        - {name: selectframe_clip_backend, value: $(var selectframe_clip_backend)}
-        - {name: selectframe_clip_model_name, value: $(var selectframe_clip_model_name)}
+        - {name: select_frame_clip, value: $(var select_frame_clip)}
         - {name: cuda_device, value: $(var cuda_device)}
 
         # Depth filtering

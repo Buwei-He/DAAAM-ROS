@@ -60,12 +60,10 @@ launch:
   - arg: {name: num_grounding_workers, default: ''}
 
   # SAM model arguments (for overriding)
-  - arg: {name: sam_model, default: ''}  # TensorRT model (480wx640h)
-  - arg: {name: sam_imgsz, default: ''}  # 'height,width'; '' = pipeline_config segmentation.imgsz
+  - arg: {name: segmenter, default: ''}  # TensorRT model (480wx640h)
 
   # CLIP model arguments
-  - arg: {name: selectframe_clip_backend, default: ''}
-  - arg: {name: selectframe_clip_model_name, default: ''}
+  - arg: {name: select_frame_clip, default: ''}
 
   # GPU selection
   - arg: {name: cuda_device, default: '', description: 'CUDA device for grounding workers (empty=inherit env, "0", "1", etc.)'}
@@ -101,8 +99,7 @@ launch:
         - {name: labelspace_colors, value: $(var labelspace_colors)}
 
         # Model configuration
-        - {name: sam_model, value: $(var sam_model)}
-        - {name: sam_imgsz, value: $(var sam_imgsz)}
+        - {name: segmenter, value: $(var segmenter)}
 
         # Processing parameters
         - {name: depth_lb, value: $(var depth_lb)}
@@ -124,8 +121,7 @@ launch:
         - {name: save_object_images, value: 'true'}
 
         # CLIP configuration
-        - {name: selectframe_clip_backend, value: $(var selectframe_clip_backend)}
-        - {name: selectframe_clip_model_name, value: $(var selectframe_clip_model_name)}
+        - {name: select_frame_clip, value: $(var select_frame_clip)}
 
         - {name: dataset_name, value: 'coda'}
 
