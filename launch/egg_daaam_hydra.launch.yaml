@@ -18,7 +18,7 @@ launch:
   - arg: {name: depth_scale, default: '1000.0', description: depth image scale factor (e.g. 1000 for mm to m)}
   - arg: {name: publish_color_image, default: 'false', description: 'colored label image for RViz only'}
   - arg: {name: sync_tolerance, default: '0.25'}
-  - arg: {name: defer_dsg_processing, default: 'true', description: Defer DSG processing until shutdown for performance}
+  - arg: {name: defer_dsg_processing, default: '', description: Defer DSG processing until shutdown for performance}
   - arg: {name: reid_backend, default: '', description: 'tracking.reid_backend override: dinov2 | clip | boxmot | none (empty = pipeline_config)'}
   - arg: {name: human_mask_policy, default: '', description: 'human.person.mask_policy override: keep | override | tag (empty = pipeline_config)'}
 
@@ -44,24 +44,24 @@ launch:
   - arg: {name: labelspace_path, default: $(find-pkg-share percorso_perception_ros)/config/labels_pseudo.yaml}
   - arg: {name: labelspace_colors, default: $(find-pkg-share percorso_perception_ros)/config/labels_pseudo.csv}
 
-  - arg: {name: query_interval_frames, default: '120'}
-  - arg: {name: min_obs_per_track, default: '8'}
-  - arg: {name: multi_image_min_n_masks, default: '32'}
-  - arg: {name: min_mask_region_area, default: '400'}
-  - arg: {name: max_mask_region_area, default: '307200'}
-  - arg: {name: depth_lb, default: '0.05'}
-  - arg: {name: depth_ub, default: '20.0'}
+  - arg: {name: query_interval_frames, default: ''}
+  - arg: {name: min_obs_per_track, default: ''}
+  - arg: {name: multi_image_min_n_masks, default: ''}
+  - arg: {name: min_mask_region_area, default: ''}
+  - arg: {name: max_mask_region_area, default: ''}
+  - arg: {name: depth_lb, default: ''}
+  - arg: {name: depth_ub, default: ''}
 
-  - arg: {name: assignment_worker, default: 'min_frames_max_size'}
-  - arg: {name: grounding_worker, default: 'dam_multi_image'}
-  - arg: {name: num_assignment_workers, default: '1'}
-  - arg: {name: num_grounding_workers, default: '1'}
+  - arg: {name: assignment_worker, default: ''}
+  - arg: {name: grounding_worker, default: ''}
+  - arg: {name: num_assignment_workers, default: ''}
+  - arg: {name: num_grounding_workers, default: ''}
 
   - arg: {name: sam_model, default: ''}
   - arg: {name: sam_model_config_path, default: ''}
   - arg: {name: sam_imgsz, default: ''}
-  - arg: {name: selectframe_clip_backend, default: 'pe'}
-  - arg: {name: selectframe_clip_model_name, default: 'PE-Core-L14-336'}
+  - arg: {name: selectframe_clip_backend, default: ''}
+  - arg: {name: selectframe_clip_model_name, default: ''}
   - arg: {name: cuda_device, default: '', description: 'CUDA device for grounding workers (empty=inherit env, "0", "1", etc.)'}
 
   - arg: {name: enable_zmq, default: 'false'}
@@ -77,9 +77,7 @@ launch:
   - arg: {name: cosmos_hoi_media_root, default: ''}
   # Latency options (off = paper path); see daaam CosmosHOIConfig.
 
-  # live demo: rolling recent-history buffer + HTTP bridge (off by default). The
-  # mid-run rebuild of events.yaml has no switch of its own: it runs whenever
-  # defer_dsg_processing is false and Cosmos HOI is on.
+  # live demo: rolling recent-history buffer + HTTP bridge (off by default).
   - arg: {name: enable_live_hoi_query, default: 'false', description: rolling buffer + query bridge}
   - arg: {name: live_bridge_host, default: '0.0.0.0'}
   - arg: {name: live_bridge_port, default: '8100'}
@@ -89,7 +87,7 @@ launch:
   - arg: {name: live_query_router_api_key, default: ''}
   - arg: {name: live_query_router_max_iterations, default: '6', description: 'tool-call round-trips before forcing an answer; lower than the offline default (15) to bound live latency'}
   - arg: {name: live_query_router_tools, default: '', description: 'comma-separated tool names to restrict /ask to; empty = all tools'}
-  - arg: {name: event_refresh_interval_sec, default: '120.0', description: 'mid-run events.yaml rebuild interval; only when defer_dsg_processing is false and Cosmos HOI is on'}
+  - arg: {name: live_event_refresh, default: '', description: "events during the run, once per human.events.grouping_window_sec: 'true' | 'false' | '' = pipeline_config (needs defer_dsg_processing false)"}
 
   - set_remap: {from: hydra_visualizer/dsg, to: hydra/backend/dsg}
 
@@ -114,8 +112,6 @@ launch:
         - {name: sam_model, value: $(var sam_model)}
         - {name: sam_model_config_path, value: $(var sam_model_config_path)}
         - {name: sam_imgsz, value: $(var sam_imgsz)}
-        - {name: sentence_embedding_model, value: ""}
-        - {name: compute_full_image_description, value: 'true'}
         - {name: captioner, value: $(var captioner)}
         - {name: cosmos_caption_region, value: $(var cosmos_caption_region)}
 
@@ -132,9 +128,6 @@ launch:
         - {name: min_obs_per_track, value: $(var min_obs_per_track)}
         - {name: multi_image_min_n_masks, value: $(var multi_image_min_n_masks)}
         - {name: save_debug_data, value: 'false'}
-        - {name: save_grounding_images, value: 'false'}
-        - {name: save_plain_grounding_images, value: 'false'}
-        - {name: save_object_images, value: 'false'}
 
         - {name: selectframe_clip_backend, value: $(var selectframe_clip_backend)}
         - {name: selectframe_clip_model_name, value: $(var selectframe_clip_model_name)}
@@ -163,7 +156,7 @@ launch:
         - {name: live_query_router_api_key, value: $(var live_query_router_api_key)}
         - {name: live_query_router_max_iterations, value: $(var live_query_router_max_iterations)}
         - {name: live_query_router_tools, value: $(var live_query_router_tools)}
-        - {name: event_refresh_interval_sec, value: $(var event_refresh_interval_sec)}
+        - {name: live_event_refresh, value: $(var live_event_refresh)}
 
   - set_remap: {from: /hydra/meta_data_in, to: /daaam_node/semantic_updates}
 

@@ -17,7 +17,7 @@ launch:
   # ROS2 node parameters
   - arg: {name: depth_scale, default: '1000.0', description: depth image scale factor (e.g. 1000 for mm to m)}
   - arg: {name: sync_tolerance, default: '0.066'}
-  - arg: {name: defer_dsg_processing, default: 'true', description: Defer DSG processing until shutdown for performance}
+  - arg: {name: defer_dsg_processing, default: '', description: Defer DSG processing until shutdown for performance}
 
   # robot configuration
   - arg: {name: robot_id, default: '0', description: unique robot identifier}
@@ -47,21 +47,21 @@ launch:
 
   # DAAAM args:
   - arg: {name: query_interval_frames, default: '90'}  # default: 90
-  - arg: {name: min_obs_per_track, default: '8'} # default: 6
-  - arg: {name: multi_image_min_n_masks, default: '32'} # default: 32
+  - arg: {name: min_obs_per_track, default: ''} # default: 6
+  - arg: {name: multi_image_min_n_masks, default: ''} # default: 32
   - arg: {name: min_mask_region_area, default: '800'}
   - arg: {name: max_mask_region_area, default: '777600'}  # 640*480 (unused)
-  - arg: {name: depth_lb, default: '0.05'}
+  - arg: {name: depth_lb, default: ''}
   - arg: {name: depth_ub, default: '3.0'}
 
-  - arg: {name: assignment_worker, default: 'min_frames_max_size'}
-  - arg: {name: grounding_worker, default: 'dam_multi_image'}
-  - arg: {name: num_assignment_workers, default: '1'}
-  - arg: {name: num_grounding_workers, default: '1'}
+  - arg: {name: assignment_worker, default: ''}
+  - arg: {name: grounding_worker, default: ''}
+  - arg: {name: num_assignment_workers, default: ''}
+  - arg: {name: num_grounding_workers, default: ''}
 
   # SAM model arguments (for overriding)
-  - arg: {name: sam_model, default: 'fastsam/FastSAM-x-640x480.engine'}  # TensorRT model (480wx640h)
-  - arg: {name: sam_imgsz, default: '480,640'}  # Size for TensorRT (height,width) - CODa is 1024hx1244w, resizes to 1024hx1248w
+  - arg: {name: sam_model, default: ''}  # TensorRT model (480wx640h)
+  - arg: {name: sam_imgsz, default: ''}  # 'height,width'; '' = pipeline_config segmentation.imgsz
   
   # output
   - arg: {name: enable_zmq, default: 'false'}
@@ -96,10 +96,7 @@ launch:
 
         # Model configuration
         - {name: sam_model, value: $(var sam_model)}
-        - {name: sam_model_config_path, value: 'fastsam/fastsam_config.yaml'}
         - {name: sam_imgsz, value: $(var sam_imgsz)}
-        - {name: sentence_embedding_model, value: ""} # Qwen/Qwen3-Embedding-4B
-        - {name: compute_full_image_description, value: 'true'}
 
         # Processing parameters
         - {name: depth_lb, value: $(var depth_lb)}
@@ -117,8 +114,9 @@ launch:
         - {name: multi_image_min_n_masks, value: $(var multi_image_min_n_masks)} # default: 32
         - {name: save_debug_data, value: 'false'}
         - {name: save_grounding_images, value: 'true'}
-        - {name: save_plain_grounding_images, value: 'false'}
         - {name: save_object_images, value: 'true'}
+        - {name: selectframe_clip_backend, value: 'openclip'}
+        - {name: selectframe_clip_model_name, value: 'ViT-L-14'}
 
         - {name: dataset_name, value: 'hm3d'}
 

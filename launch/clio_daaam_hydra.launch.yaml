@@ -76,26 +76,20 @@ launch:
 
         # Model configuration optimized for Clio Apartment
         - {name: sam_model, value: 'fastsam/FastSAM-x.pt'}
-        - {name: sam_model_config_path, value: 'fastsam/fastsam_config.yaml'}
         - {name: sentence_embedding_model, value: "sentence-transformers/sentence-t5-large"} # Qwen/Qwen3-Embedding-4B
-        - {name: compute_full_image_description, value: 'true'}
 
         # Processing parameters optimized for Clio Apartment
-        - {name: depth_lb, value: '0.05'}
         - {name: depth_ub, value: '2.0'}
         - {name: query_interval_frames, value: '60'} # default: 90
         - {name: num_assignment_workers, value: '2'}
-        - {name: num_grounding_workers, value: '1'}
         - {name: min_mask_region_area, value: '300'} 
 
         # Worker configuration
         - {name: assignment_worker, value: 'min_frames'}
-        - {name: grounding_worker, value: 'dam_multi_image'}
-        - {name: min_obs_per_track, value: '8'} # default: 6
-        - {name: multi_image_min_n_masks, value: '32'}
         - {name: save_debug_data, value: 'false'}
         - {name: save_grounding_images, value: 'true'}
-        - {name: save_plain_grounding_images, value: 'false'}
+        - {name: selectframe_clip_backend, value: 'openclip'}
+        - {name: selectframe_clip_model_name, value: 'ViT-L-14'}
 
         - {name: dataset_name, value: 'clio'}
 

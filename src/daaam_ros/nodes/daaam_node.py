@@ -3,6 +3,7 @@
 import rclpy # type: ignore
 from rclpy.node import Node # type: ignore
 from rclpy.executors import SingleThreadedExecutor, ExternalShutdownException
+from rcl_interfaces.msg import ParameterDescriptor # type: ignore
 from cv_bridge import CvBridge  # type: ignore
 from sensor_msgs.msg import Image, CameraInfo  # type: ignore
 from std_msgs.msg import String  # type: ignore
@@ -51,16 +52,43 @@ from daaam.scene_understanding.config import SceneUnderstandingConfig, ToolConfi
 from daaam.human_reason import RematchCache
 from daaam.human_reason import refresh_event_outputs as _refresh_event_outputs
 
-# ROS parameters that may override pipeline_config.yaml. "" means "keep the yaml value"; the launch
-# files and percorso-demo set them per deployment (Cosmos server wiring) or per run (the switches).
+# ROS parameters that override pipeline_config.yaml, and the config attribute(s) each one sets. Every one
+# defaults to "" = the yaml value, so a launch file states only what its dataset or deployment needs (frame
+# sizes, server wiring) and percorso-demo only the per-run switches; a value is coerced to the attribute's type.
 _CONFIG_OVERRIDE_PARAMS = {
-	"reid_backend": "",        # tracking.reid_backend
-	"human_mode": "",          # human.mode
-	"human_mask_policy": "",   # human.person.mask_policy
-	"cosmos_hoi_base_url": "",  # human.hoi.base_url
-	"cosmos_hoi_model": "",     # human.hoi.model
-	"cosmos_hoi_api_key": "",   # human.hoi.api_key
-	"cosmos_hoi_media_root": "",  # human.hoi.media_root
+	"sam_model": "segmentation.model_name",
+	"sam_model_config_path": "segmentation.model_config_path",
+	"min_mask_region_area": ("segmentation.min_mask_region_area", "workers.assignment_config.min_mask_region_area"),
+	"max_mask_region_area": "workers.assignment_config.max_mask_region_area",
+	"polygon_epsilon_factor": "segmentation.polygon_epsilon_factor",
+	"query_interval_frames": "grounding.query_interval_frames",
+	"cuda_device": "grounding.cuda_device",
+	"sentence_embedding_model": "workers.dam_grounding_config.sentence_embedding_model_name",
+	"compute_full_image_description": "workers.dam_grounding_config.compute_full_image_description",
+	"captioner": "workers.dam_grounding_config.captioner",
+	"cosmos_caption_region": "workers.dam_grounding_config.cosmos_caption_region",
+	"multi_image_min_n_masks": "workers.dam_grounding_config.multi_image_min_n_masks",
+	"save_grounding_images": "workers.dam_grounding_config.save_grounding_images",
+	"save_plain_grounding_images": "workers.dam_grounding_config.save_plain_grounding_images",
+	"save_object_images": "workers.dam_grounding_config.save_object_images",
+	"selectframe_clip_backend": "workers.dam_grounding_config.selectframe_clip_backend",
+	"selectframe_clip_model_name": "workers.dam_grounding_config.selectframe_clip_model_name",
+	"num_assignment_workers": "workers.num_assignment_workers",
+	"num_grounding_workers": "workers.num_grounding_workers",
+	"assignment_worker": "workers.assignment_worker",
+	"grounding_worker": "workers.grounding_worker",
+	"min_obs_per_track": "workers.assignment_config.min_obs_per_track",
+	"depth_lb": "depth.depth_lb",
+	"depth_ub": "depth.depth_ub",
+	"defer_dsg_processing": "scene_graph.defer_dsg_processing",
+	"reid_backend": "tracking.reid_backend",
+	"human_mode": "human.mode",
+	"human_mask_policy": "human.person.mask_policy",
+	"cosmos_hoi_base_url": "human.hoi.base_url",
+	"cosmos_hoi_model": "human.hoi.model",
+	"cosmos_hoi_api_key": "human.hoi.api_key",
+	"cosmos_hoi_media_root": "human.hoi.media_root",
+	"live_event_refresh": "human.events.live_refresh",
 }
 
 class DaaamNode(Node):
@@ -132,45 +160,18 @@ class DaaamNode(Node):
 		self.declare_parameter("semantic_config", "config/labels_pseudo.yaml")
 		self.declare_parameter("labelspace_colors", "config/labels_pseudo.csv")
 		
-		# model params - empty string means "use pipeline_config.yaml value"
-		self.declare_parameter("sam_model", "")
-		self.declare_parameter("sam_model_config_path", "")
 		# Use string parameter for sam_imgsz, will parse it to list
-		self.declare_parameter("sam_imgsz", "")  # Empty string means None/auto, e.g., "1248,1024" for TensorRT (height,width)
-		self.declare_parameter("sentence_embedding_model", "sentence-transformers/sentence-t5-xl")
+		self.declare_parameter("sam_imgsz", "")  # "height,width" (segmentation.imgsz); "" = pipeline_config
+		# pipeline_config overrides, "" = the yaml value (launch turns 'true' / '120' / '0.05' into typed values)
+		for name in _CONFIG_OVERRIDE_PARAMS:
+			self.declare_parameter(name, "", ParameterDescriptor(dynamic_typing=True))
 
-		# processing parameters
-		self.declare_parameter("query_interval_frames", 60)
-		self.declare_parameter("num_assignment_workers", 1)
-		self.declare_parameter("num_grounding_workers", 4)
-		self.declare_parameter("assignment_worker", "min_frames_max_size")  # Options: "min_frames", "min_frames_max_size"
-		self.declare_parameter("grounding_worker", "dam_multi_image")  # Options: "dam_multi_image"
-		self.declare_parameter("min_mask_region_area", 300)
-		self.declare_parameter("max_mask_region_area", 640*480)
-		self.declare_parameter("polygon_epsilon_factor", 0.001)
-		
-		# worker-specific parameters (commonly overridden)
-		self.declare_parameter("agent_model_name", "gpt-4.1-mini")
-		self.declare_parameter("min_obs_per_track", 6)
 		self.declare_parameter("save_debug_data", False)
-		self.declare_parameter("multi_image_min_n_masks", 32)
 		self.declare_parameter("dataset_name", "unknown")
-		self.declare_parameter("compute_full_image_description", False)
-		# "" = pipeline_config workers.dam_grounding_config value
-		self.declare_parameter("captioner", "")
-		self.declare_parameter("cosmos_caption_region", "")
-		self.declare_parameter("save_grounding_images", False)
-		self.declare_parameter("save_plain_grounding_images", False)
-		self.declare_parameter("save_object_images", False)
-		self.declare_parameter("selectframe_clip_backend", "openclip")  # "openclip" or "pe" (Perception Encoder)
-		self.declare_parameter("selectframe_clip_model_name", "ViT-L-14")  # Model name for CLIP backend
-		self.declare_parameter("cuda_device", "")  # CUDA device for grounding workers ("" = inherit env, "0", "1", etc.)
 
 		# depth filtering
 		self.declare_parameter("depth_scale", 1.0) # used within node to convert depth values to m
 		self.declare_parameter("publish_color_image", False)  # colored label image for RViz only; Hydra reads the uint16 label image
-		self.declare_parameter("depth_lb", 0.25)
-		self.declare_parameter("depth_ub", 5.0)
 		self.declare_parameter("sync_tolerance", 0.033)  # sync tolerance in seconds (default 33ms for 30Hz cameras)
 
 		# tf2
@@ -178,23 +179,11 @@ class DaaamNode(Node):
 		self.declare_parameter("camera_frame", "dominic/forward_link")  # left_cam
 		self.declare_parameter("tf_timeout", 0.01) 
 		self.declare_parameter("tf_update_rate", 30.0)  # Hz
-		
-		# scene graph processing
-		self.declare_parameter("defer_dsg_processing", False)
-
-		# tracking parameters
-		self.declare_parameter("reid_backend", "")  # tracking.reid_backend override: dinov2 | clip | boxmot | none ("" = pipeline_config)
 
 		# debug and output
 		self.declare_parameter("enable_debug_output", True)
 		self.declare_parameter("output_dir", "output")
 		self.declare_parameter("output_run_prefix", "")
-		self.declare_parameter("human_mode", "")  # human.mode override: robot | egocentric ("" = pipeline_config)
-		self.declare_parameter("human_mask_policy", "")  # human.person.mask_policy override: keep | override | tag ("" = pipeline_config)
-		self.declare_parameter("cosmos_hoi_base_url", "")  # human.hoi override ("" = pipeline_config)
-		self.declare_parameter("cosmos_hoi_model", "")  # human.hoi override ("" = pipeline_config)
-		self.declare_parameter("cosmos_hoi_api_key", "")  # human.hoi override ("" = pipeline_config)
-		self.declare_parameter("cosmos_hoi_media_root", "")  # human.hoi override ("" = pipeline_config)
 
 		# live HOI query (demo): reason on a rolling recent-history buffer on demand,
 		# independent of save_human_clips/enable_cosmos_hoi_processing's finalize-on-
@@ -229,11 +218,6 @@ class DaaamNode(Node):
 		self.declare_parameter("live_query_router_max_iterations", 6)
 		self.declare_parameter("live_query_router_tools", "")
 
-		# Mid-run rebuild of events.yaml / events_semantic.yaml follows
-		# defer_dsg_processing: a live scene graph (false) gets live events too,
-		# rebuilt incrementally every interval; deferred (true) builds both once
-		# at shutdown, in full. Needs Cosmos HOI, which is what produces events.
-		self.declare_parameter("event_refresh_interval_sec", 120.0)
 
 	def _get_parameters(self) -> None:
 		"""Get parameter values."""
@@ -241,9 +225,6 @@ class DaaamNode(Node):
 		self.semantic_config_path = self.get_parameter("semantic_config").get_parameter_value().string_value
 		self.labelspace_colors_path = self.get_parameter("labelspace_colors").get_parameter_value().string_value
 		
-		# processing parameters
-		self.sam_model = self.get_parameter("sam_model").get_parameter_value().string_value
-		self.sam_model_config_path = self.get_parameter("sam_model_config_path").get_parameter_value().string_value
 		# Parse sam_imgsz from string (e.g., "1024,1248" -> [1024, 1248])
 		sam_imgsz_str = self.get_parameter("sam_imgsz").get_parameter_value().string_value
 		if sam_imgsz_str:
@@ -254,56 +235,21 @@ class DaaamNode(Node):
 				self.sam_imgsz = []
 		else:
 			self.sam_imgsz = []
-		self.sentence_embedding_model = self.get_parameter("sentence_embedding_model").get_parameter_value().string_value
-		self.query_interval_frames = self.get_parameter("query_interval_frames").get_parameter_value().integer_value
-		self.num_assignment_workers = self.get_parameter("num_assignment_workers").get_parameter_value().integer_value
-		self.num_grounding_workers = self.get_parameter("num_grounding_workers").get_parameter_value().integer_value
-		self.assignment_worker = self.get_parameter("assignment_worker").get_parameter_value().string_value
-		self.grounding_worker = self.get_parameter("grounding_worker").get_parameter_value().string_value
-		self.min_mask_region_area = self.get_parameter("min_mask_region_area").get_parameter_value().integer_value
-		self.max_mask_region_area = self.get_parameter("max_mask_region_area").get_parameter_value().integer_value
-		self.polygon_epsilon_factor = self.get_parameter("polygon_epsilon_factor").get_parameter_value().double_value
 		
-		# worker-specific parameters
-		self.agent_model_name = self.get_parameter("agent_model_name").get_parameter_value().string_value
-		self.min_obs_per_track = self.get_parameter("min_obs_per_track").get_parameter_value().integer_value
 		self.save_debug_data = self.get_parameter("save_debug_data").get_parameter_value().bool_value
-		self.multi_image_min_n_masks = self.get_parameter("multi_image_min_n_masks").get_parameter_value().integer_value
 		self.dataset_name = self.get_parameter("dataset_name").get_parameter_value().string_value
-		self.compute_full_image_description = self.get_parameter("compute_full_image_description").get_parameter_value().bool_value
-		self.captioner = self.get_parameter("captioner").get_parameter_value().string_value
-		self.cosmos_caption_region = self.get_parameter("cosmos_caption_region").get_parameter_value().string_value
-		self.save_grounding_images = self.get_parameter("save_grounding_images").get_parameter_value().bool_value
-		self.save_plain_grounding_images = self.get_parameter("save_plain_grounding_images").get_parameter_value().bool_value
-		self.save_object_images = self.get_parameter("save_object_images").get_parameter_value().bool_value
-		self.selectframe_clip_backend = self.get_parameter("selectframe_clip_backend").get_parameter_value().string_value
-		self.selectframe_clip_model_name = self.get_parameter("selectframe_clip_model_name").get_parameter_value().string_value
-		cuda_device_str = self.get_parameter("cuda_device").get_parameter_value().string_value
-		self.cuda_device = cuda_device_str if cuda_device_str else None
 
 		# depth parameters
 		self.depth_scale = self.get_parameter("depth_scale").get_parameter_value().double_value # used within node to convert depth values to m
 		self.publish_color_image = self.get_parameter("publish_color_image").get_parameter_value().bool_value
-		self.depth_lb = self.get_parameter("depth_lb").get_parameter_value().double_value
-		self.depth_ub = self.get_parameter("depth_ub").get_parameter_value().double_value
 		self.sync_tolerance = self.get_parameter("sync_tolerance").get_parameter_value().double_value
 		
-		# scene graph processing
-		self.defer_dsg_processing = self.get_parameter("defer_dsg_processing").get_parameter_value().bool_value
 
-		# tracking parameters
-		self.reid_backend = self.get_parameter("reid_backend").get_parameter_value().string_value
 
 		# debug
 		self.enable_debug_output = self.get_parameter("enable_debug_output").get_parameter_value().bool_value
 		self.output_dir = Path(self.get_parameter("output_dir").get_parameter_value().string_value)
 		self.output_run_prefix = self.get_parameter("output_run_prefix").get_parameter_value().string_value
-		self.human_mode = self.get_parameter("human_mode").get_parameter_value().string_value
-		self.human_mask_policy = self.get_parameter("human_mask_policy").get_parameter_value().string_value
-		self.cosmos_hoi_base_url = self.get_parameter("cosmos_hoi_base_url").get_parameter_value().string_value
-		self.cosmos_hoi_model = self.get_parameter("cosmos_hoi_model").get_parameter_value().string_value
-		self.cosmos_hoi_api_key = self.get_parameter("cosmos_hoi_api_key").get_parameter_value().string_value
-		self.cosmos_hoi_media_root = self.get_parameter("cosmos_hoi_media_root").get_parameter_value().string_value
 
 		self.enable_live_hoi_query = self.get_parameter("enable_live_hoi_query").get_parameter_value().bool_value
 		self.live_bridge_host = self.get_parameter("live_bridge_host").get_parameter_value().string_value
@@ -328,9 +274,6 @@ class DaaamNode(Node):
 		self.live_query_router_tools = (
 			[name.strip() for name in router_tools.split(",") if name.strip()] or None
 		)
-		self.event_refresh_interval_sec = self.get_parameter(
-			"event_refresh_interval_sec"
-		).get_parameter_value().double_value
 		# Mid-run refreshes skip clips whose inputs are unchanged (byte-identical
 		# output, see RematchCache); the shutdown refresh redoes every clip.
 		self._rematch_cache = RematchCache()
@@ -351,10 +294,15 @@ class DaaamNode(Node):
 			self.live_query_router_model = self.llm_model
 		if self.live_query_router_base_url is None:
 			self.live_query_router_base_url = self.config.grounding.llm_base_url
+		if self.live_query_router_api_key is None:  # the `llm` entry's key (models.yaml), not whatever is in the env
+			self.live_query_router_api_key = self.config.llm_api_key or None
 
 	def _adopt_config(self) -> None:
 		"""The node's runtime attributes, read from the (overridden) config in one place."""
 		human = self.config.human
+		self.defer_dsg_processing = self.config.scene_graph.defer_dsg_processing
+		self.selectframe_clip_backend = self.config.workers.dam_grounding_config.selectframe_clip_backend
+		self.selectframe_clip_model_name = self.config.workers.dam_grounding_config.selectframe_clip_model_name
 		self.egocentric = human.egocentric
 		self.human_clip_min_frames = max(1, int(round(human.clips.min_clip_sec * human.clips.fps)))
 		self.human_clip_output_fps = human.clips.fps
@@ -363,6 +311,8 @@ class DaaamNode(Node):
 		self.live_buffer_sec = human.clips.live_buffer_sec
 		self.live_snapshot_keep = human.clips.live_snapshot_keep
 		self.enable_cosmos_hoi_processing = human.hoi.enabled
+		if human.hoi.enabled or self.enable_live_hoi_query or self.config.workers.dam_grounding_config.captioner != "dam":
+			self.config.resolve_cosmos()  # models.yaml vlm, unless the launch passed cosmos_hoi_base_url
 		self.cosmos_hoi_base_url = human.hoi.base_url
 		self.cosmos_hoi_model = human.hoi.model
 		self.cosmos_hoi_api_key = human.hoi.api_key
@@ -375,7 +325,6 @@ class DaaamNode(Node):
 		self.enable_semantic_event_post_processing = human.events.enabled
 		self.semantic_event_output_name = human.events.output_name
 		self.semantic_event_neighbor_window_sec = human.events.neighbor_window_sec
-		self.semantic_event_confidence_threshold = human.events.confidence_threshold
 		self.llm_model = self.config.llm_model
 		# Clips are recorded for their own sake, for Cosmos HOI, or for the live query buffer. The
 		# orchestrator reads clips.enabled to decide whether the person segmenter (robot mode's clip
@@ -383,7 +332,12 @@ class DaaamNode(Node):
 		self.save_human_clips = human.clips.enabled
 		self.human_clip_recording_enabled = human.clips.enabled or human.hoi.enabled or self.enable_live_hoi_query
 		human.clips.enabled = self.human_clip_recording_enabled
-		self.enable_live_event_refresh = not self.defer_dsg_processing and self.enable_cosmos_hoi_processing
+		# Events during the run (human.events.live_refresh) are a switch of their own: experiments keep them off and
+		# still get stream grouping after the run. They read the live scene graph's corrections, so they need it.
+		if human.events.live_refresh and self.defer_dsg_processing:
+			raise ValueError("human.events.live_refresh needs the live scene graph: set defer_dsg_processing:=false")
+		self.enable_live_event_refresh = human.events.live_refresh and self.enable_cosmos_hoi_processing
+		self.event_refresh_interval_sec = human.events.grouping_window_sec
 		if self.enable_cosmos_hoi_processing:
 			self.logger.info(f"Cosmos HOI: url={self.cosmos_hoi_base_url} model={self.cosmos_hoi_model} "
 							 f"sampling={self.cosmos_hoi_video_sampling} input={self.cosmos_hoi_pass1_input}")
@@ -398,86 +352,42 @@ class DaaamNode(Node):
 			raise ValueError(f"human.hoi.input must be one of {PASS1_INPUTS}, not {self.cosmos_hoi_pass1_input!r}")
 
 	def _override_config_with_parameters(self) -> None:
-		"""Override configuration with ROS parameters."""
-		if self.sam_model:
-			self.config.segmentation.model_name = self.sam_model
-		if self.sam_model_config_path:
-			self.config.segmentation.model_config_path = self.sam_model_config_path
-		self.config.segmentation.min_mask_region_area = self.min_mask_region_area
-		self.config.segmentation.polygon_epsilon_factor = self.polygon_epsilon_factor
-		# Set imgsz if provided (for TensorRT models)
+		"""Apply the ROS parameters to the loaded pipeline config: the node's own wiring (paths, output dir)
+		always, the _CONFIG_OVERRIDE_PARAMS only when set (""= the yaml value)."""
 		if self.sam_imgsz and len(self.sam_imgsz) == 2:
 			self.config.segmentation.imgsz = tuple(self.sam_imgsz)
-		self.config.grounding.agent_model_name = self.agent_model_name
-		self.config.grounding.query_interval_frames = self.query_interval_frames
-
-		self.config.grounding.sentence_embedding_model = self.sentence_embedding_model
-		self.config.workers.dam_grounding_config.sentence_embedding_model_name = self.sentence_embedding_model
-		self.config.workers.dam_grounding_config.compute_full_image_description = self.compute_full_image_description
-		if self.captioner:
-			self.config.workers.dam_grounding_config.captioner = self.captioner
-		if self.cosmos_caption_region:
-			self.config.workers.dam_grounding_config.cosmos_caption_region = self.cosmos_caption_region
-		self.logger.info(f"Captioner: {self.config.workers.dam_grounding_config.captioner} "
-						 f"(cosmos region {self.config.workers.dam_grounding_config.cosmos_caption_region})")
-
-		self.config.workers.num_assignment_workers = self.num_assignment_workers
-		self.config.workers.num_grounding_workers = self.num_grounding_workers
-		self.config.workers.assignment_worker = self.assignment_worker
-		self.config.workers.grounding_worker = self.grounding_worker
-		self.config.depth.depth_lb = self.depth_lb
-		self.config.depth.depth_ub = self.depth_ub
 		self.config.semantic_config_path = self.semantic_config_path
 		self.config.labelspace_colors_path = self.labelspace_colors_path
 		self.config.output_dir = str(self.output_dir)
 		self.config.output_run_prefix = str(self.output_run_prefix)
-		
 		self.config.log_dir = self.log_dir
-		
-		# worker-specific parameters if provided
-		self.config.workers.assignment_config.min_obs_per_track = self.min_obs_per_track
-		self.config.workers.assignment_config.min_mask_region_area = self.min_mask_region_area
-		self.config.workers.assignment_config.max_mask_region_area = self.max_mask_region_area
-		
-		self.config.workers.dam_grounding_config.multi_image_min_n_masks = self.multi_image_min_n_masks
-		self.config.workers.dam_grounding_config.save_grounding_images = self.save_grounding_images
-		self.config.workers.dam_grounding_config.save_plain_grounding_images = self.save_plain_grounding_images
-		self.config.workers.dam_grounding_config.save_object_images = self.save_object_images
-		self.config.workers.dam_grounding_config.selectframe_clip_backend = self.selectframe_clip_backend
-		self.config.workers.dam_grounding_config.selectframe_clip_model_name = self.selectframe_clip_model_name
-
-		# CUDA device for grounding workers
-		if self.cuda_device is not None:
-			self.config.grounding.cuda_device = self.cuda_device
-			self.logger.info(f"Set cuda_device to {self.cuda_device}")
-
-		self.logger.info(f"Set multi_image_min_n_masks to {self.multi_image_min_n_masks}")
-		self.logger.info(f"Set save_grounding_images to {self.save_grounding_images}")
-		self.logger.info(f"Set save_plain_grounding_images to {self.save_plain_grounding_images}")
-		self.logger.info(f"Set save_object_images to {self.save_object_images}")
-		self.logger.info(f"Set selectframe_clip_backend to {self.selectframe_clip_backend}")
-		self.logger.info(f"Set selectframe_clip_model_name to {self.selectframe_clip_model_name}")
-
-		self.config.scene_graph.defer_dsg_processing = self.defer_dsg_processing
-		self.logger.info(f"Set defer_dsg_processing to {self.defer_dsg_processing}")
 		self.config.segmentation.color_label_image = self.publish_color_image
 
-		# Per-run switches and server wiring (_CONFIG_OVERRIDE_PARAMS); "" keeps the yaml value
-		human = self.config.human
-		overrides = {
-			"tracking.reid_backend": (self.reid_backend, self.config.tracking, "reid_backend"),
-			"human.mode": (self.human_mode, human, "mode"),
-			"human.person.mask_policy": (self.human_mask_policy, human.person, "mask_policy"),
-			"human.hoi.base_url": (self.cosmos_hoi_base_url, human.hoi, "base_url"),
-			"human.hoi.model": (self.cosmos_hoi_model, human.hoi, "model"),
-			"human.hoi.api_key": (self.cosmos_hoi_api_key, human.hoi, "api_key"),
-			"human.hoi.media_root": (self.cosmos_hoi_media_root, human.hoi, "media_root"),
-		}
-		for key, (value, target, attr) in overrides.items():
-			if value != "":
-				setattr(target, attr, value)
-				self.logger.info(f"ROS parameter overrides {key} = {value!r}")
-		human.__post_init__()  # re-validate the modes after the overrides
+		for name, paths in _CONFIG_OVERRIDE_PARAMS.items():
+			value = self.get_parameter(name).value
+			if value == "":
+				continue
+			for path in (paths,) if isinstance(paths, str) else paths:
+				*parents, attr = path.split(".")
+				target = self.config
+				for part in parents:
+					target = getattr(target, part)
+				current = getattr(target, attr)
+				if isinstance(current, bool):
+					if not isinstance(value, bool):
+						raise ValueError(f"ROS parameter {name} must be true or false (or '' = pipeline_config), not {value!r}")
+					coerced = value
+				elif isinstance(current, int):
+					coerced = int(value)
+				elif isinstance(current, float):
+					coerced = float(value)
+				else:
+					coerced = str(value)
+				setattr(target, attr, coerced)
+				self.logger.info(f"ROS parameter overrides {path} = {coerced!r}")
+		self.config.human.__post_init__()  # re-validate the modes after the overrides
+		dam = self.config.workers.dam_grounding_config
+		self.logger.info(f"Captioner: {dam.captioner} (cosmos region {dam.cosmos_caption_region})")
 
 	def _initialize_pipeline(self) -> None:
 		"""Initialize the pipeline orchestrator."""
@@ -1143,7 +1053,7 @@ class DaaamNode(Node):
 		from daaam.human_reason.label_similarity import LabelScorer
 
 		linking = self.config.human.linking
-		LabelScorer.configure(linking.judge, model_name=linking.judge_model, accept_threshold=linking.accept_threshold)
+		LabelScorer.configure(linking.judge, model_name=linking.judge_model)
 		router_agent = getattr(getattr(self, "live_query_bridge", None), "router_agent", None)
 		shareable = (router_agent is not None and linking.judge == "embedding"
 		             and (not linking.judge_model
@@ -1154,31 +1064,40 @@ class DaaamNode(Node):
 			return
 		threading.Thread(target=LabelScorer.get, name="label_scorer_prewarm", daemon=True).start()
 
-	def _refresh_event_outputs(self, rematch_cache: "RematchCache | None" = None) -> dict:
+	def _refresh_event_outputs(self, rematch_cache: "RematchCache | None" = None, final: bool = True) -> dict:
 		"""Run the HOI post-processing chain against current outputs.
 
-		Shared by shutdown and the periodic mid-run refresh; every stage rewrites
-		its output from scratch, so repeated calls are safe. With rematch_cache
-		the rematch skips clips whose inputs are unchanged since the last call.
+		Shared by shutdown and the periodic mid-run refresh; repeated calls are
+		safe. With rematch_cache the rematch skips clips whose inputs are unchanged
+		since the last call. Grouping follows human.events.grouping; in stream mode a
+		mid-run call groups only the interactions outside frozen events and the final
+		one (shutdown) replays the rest window by window, then freezes everything.
 		"""
 		from pathlib import Path as _Path
 		import os as _os
+		# resolved per refresh: a local grouping server restarted on another node is found at the next one
+		grouping_model, grouping_base_url, grouping_api_key = self.config.grouping_llm()
 		return _refresh_event_outputs(
 			_Path(self.orchestrator.output_dir),
 			cosmos_hoi_enabled=getattr(self, 'enable_cosmos_hoi_processing', False),
 			llm_base_url=self.config.grounding.llm_base_url or "https://api.openai.com/v1",
 			llm_model=self.llm_model,
-			llm_api_key=_os.environ.get("OPENAI_API_KEY", ""),
+			llm_api_key=self.config.llm_api_key or _os.environ.get("OPENAI_API_KEY", ""),
+			grouping_model=grouping_model,
+			grouping_base_url=grouping_base_url,
+			grouping_api_key=grouping_api_key,
 			match_iou_threshold=self.cosmos_hoi_match_iou_threshold,
 			semantic_reranking=self.cosmos_hoi_semantic_reranking,
 			semantic_enabled=getattr(self, 'enable_semantic_event_post_processing', True),
 			semantic_output_name=self.semantic_event_output_name,
 			neighbor_window_sec=self.semantic_event_neighbor_window_sec,
-			confidence_threshold=self.semantic_event_confidence_threshold,
 			link_judge=self.config.human.linking.judge,
 			link_judge_model=self.config.human.linking.judge_model,
-			link_accept_threshold=self.config.human.linking.accept_threshold,
 			rematch_cache=rematch_cache,
+			grouping_mode=self.config.human.events.grouping,
+			lookahead_sec=self.config.human.events.grouping_lookahead_sec,
+			window_sec=self.config.human.events.grouping_window_sec,
+			final=final,
 			logger=self.logger,
 		)
 
@@ -1214,7 +1133,7 @@ class DaaamNode(Node):
 				self.orchestrator.scene_graph_service.save_corrections(
 					self.orchestrator.output_dir
 				)
-				result = self._refresh_event_outputs(self._rematch_cache)
+				result = self._refresh_event_outputs(self._rematch_cache, final=False)
 				if result.get("events_path"):
 					self.logger.info(
 						f"Event refresh done in {time.time() - start_wall:.1f}s: "
@@ -1381,6 +1300,11 @@ class DaaamNode(Node):
 
 			# corrections.yaml is now written - revalidate HOI matches before event grouping
 			if hasattr(self, 'orchestrator') and hasattr(self.orchestrator, 'output_dir'):
+				# a periodic refresh still in flight would overwrite the final one (stream mode: with open events)
+				import time as _time
+				_deadline = _time.time() + 120.0
+				while getattr(self, '_event_refresh_running', False) and _time.time() < _deadline:
+					_time.sleep(0.5)
 				self.logger.info("[Shutdown] Refreshing event outputs...")
 				self._refresh_event_outputs()
 
@@ -1530,8 +1454,9 @@ def main(args=None):
 		print(f"Error starting node: {e}")
 		traceback.print_exc()
 	finally:
-		# Start watchdog - guarantees process exit even if shutdown path blocks
-		watchdog = threading.Thread(target=_shutdown_watchdog, args=(240.0,), daemon=True)
+		# Start watchdog - guarantees process exit even if shutdown path blocks.
+		# DAAAM_SHUTDOWN_WATCHDOG_S overrides the 240 s default: hours-long runs need longer to save and group events.
+		watchdog = threading.Thread(target=_shutdown_watchdog, args=(float(os.environ.get("DAAAM_SHUTDOWN_WATCHDOG_S", 240.0)),), daemon=True)
 		watchdog.start()
 
 		print("Destroying node...")

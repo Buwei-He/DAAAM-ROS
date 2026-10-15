@@ -17,7 +17,7 @@ launch:
   # ROS2 node parameters
   - arg: {name: depth_scale, default: '1000.0', description: depth image scale factor (e.g. 1000 for mm to m)}
   - arg: {name: sync_tolerance, default: '0.066'}
-  - arg: {name: defer_dsg_processing, default: 'true', description: Defer DSG processing until shutdown for performance}
+  - arg: {name: defer_dsg_processing, default: '', description: Defer DSG processing until shutdown for performance}
 
   # robot configuration
   - arg: {name: robot_id, default: '0', description: unique robot identifier}
@@ -46,26 +46,26 @@ launch:
   - arg: {name: labelspace_colors, default: $(find-pkg-share percorso_perception_ros)/config/labels_pseudo.csv}
 
   # DAAAM args:
-  - arg: {name: query_interval_frames, default: '120'}  # default: 90
-  - arg: {name: min_obs_per_track, default: '8'} # default: 6
-  - arg: {name: multi_image_min_n_masks, default: '32'} # default: 32
-  - arg: {name: min_mask_region_area, default: '400'}
-  - arg: {name: max_mask_region_area, default: '307200'}  # 640*480 (unused)
-  - arg: {name: depth_lb, default: '0.05'}
-  - arg: {name: depth_ub, default: '20.0'}
+  - arg: {name: query_interval_frames, default: ''}  # default: 90
+  - arg: {name: min_obs_per_track, default: ''} # default: 6
+  - arg: {name: multi_image_min_n_masks, default: ''} # default: 32
+  - arg: {name: min_mask_region_area, default: ''}
+  - arg: {name: max_mask_region_area, default: ''}  # 640*480 (unused)
+  - arg: {name: depth_lb, default: ''}
+  - arg: {name: depth_ub, default: ''}
 
-  - arg: {name: assignment_worker, default: 'min_frames_max_size'}
-  - arg: {name: grounding_worker, default: 'dam_multi_image'}
-  - arg: {name: num_assignment_workers, default: '1'}
-  - arg: {name: num_grounding_workers, default: '1'}
+  - arg: {name: assignment_worker, default: ''}
+  - arg: {name: grounding_worker, default: ''}
+  - arg: {name: num_assignment_workers, default: ''}
+  - arg: {name: num_grounding_workers, default: ''}
 
   # SAM model arguments (for overriding)
-  - arg: {name: sam_model, default: 'fastsam/FastSAM-x-640x480.engine'}  # TensorRT model (480wx640h)
-  - arg: {name: sam_imgsz, default: '480,640'}  # Size for TensorRT (height,width) - CODa is 1024hx1244w, resizes to 1024hx1248w
+  - arg: {name: sam_model, default: ''}  # TensorRT model (480wx640h)
+  - arg: {name: sam_imgsz, default: ''}  # 'height,width'; '' = pipeline_config segmentation.imgsz
 
   # CLIP model arguments
-  - arg: {name: selectframe_clip_backend, default: 'pe'}
-  - arg: {name: selectframe_clip_model_name, default: 'PE-Core-L14-336'}
+  - arg: {name: selectframe_clip_backend, default: ''}
+  - arg: {name: selectframe_clip_model_name, default: ''}
 
   # GPU selection
   - arg: {name: cuda_device, default: '', description: 'CUDA device for grounding workers (empty=inherit env, "0", "1", etc.)'}
@@ -102,10 +102,7 @@ launch:
 
         # Model configuration
         - {name: sam_model, value: $(var sam_model)}
-        - {name: sam_model_config_path, value: 'fastsam/fastsam_config.yaml'}
         - {name: sam_imgsz, value: $(var sam_imgsz)}
-        - {name: sentence_embedding_model, value: ""} # Qwen/Qwen3-Embedding-4B
-        - {name: compute_full_image_description, value: 'true'}
 
         # Processing parameters
         - {name: depth_lb, value: $(var depth_lb)}

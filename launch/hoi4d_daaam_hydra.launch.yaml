@@ -14,7 +14,7 @@ launch:
   # HOI4D depth bags are written in 16UC1 mm by create_hoi4d_bag.py
   - arg: {name: depth_scale, default: '1000.0'}
   - arg: {name: sync_tolerance, default: '0.25'}
-  - arg: {name: defer_dsg_processing, default: 'true'}
+  - arg: {name: defer_dsg_processing, default: ''}
 
   - arg: {name: robot_id, default: '0'}
   - arg: {name: sensor_frame, default: cam0_optical_frame}
@@ -38,25 +38,25 @@ launch:
   - arg: {name: labelspace_path, default: $(find-pkg-share percorso_perception_ros)/config/labels_pseudo.yaml}
   - arg: {name: labelspace_colors, default: $(find-pkg-share percorso_perception_ros)/config/labels_pseudo.csv}
 
-  - arg: {name: query_interval_frames, default: '120'}
-  - arg: {name: min_obs_per_track, default: '8'}
-  - arg: {name: multi_image_min_n_masks, default: '32'}
-  - arg: {name: min_mask_region_area, default: '400'}
+  - arg: {name: query_interval_frames, default: ''}
+  - arg: {name: min_obs_per_track, default: ''}
+  - arg: {name: multi_image_min_n_masks, default: ''}
+  - arg: {name: min_mask_region_area, default: ''}
   - arg: {name: max_mask_region_area, default: '2073600'}  # 1920x1080
   # HOI4D depth range: 0.25–8.0 m
   - arg: {name: depth_lb, default: '0.25'}
   - arg: {name: depth_ub, default: '8.0'}
 
-  - arg: {name: assignment_worker, default: 'min_frames_max_size'}
-  - arg: {name: grounding_worker, default: 'dam_multi_image'}
-  - arg: {name: num_assignment_workers, default: '1'}
-  - arg: {name: num_grounding_workers, default: '1'}
+  - arg: {name: assignment_worker, default: ''}
+  - arg: {name: grounding_worker, default: ''}
+  - arg: {name: num_assignment_workers, default: ''}
+  - arg: {name: num_grounding_workers, default: ''}
 
   - arg: {name: sam_model, default: ''}
   - arg: {name: sam_model_config_path, default: ''}
   - arg: {name: sam_imgsz, default: ''}
-  - arg: {name: selectframe_clip_backend, default: 'pe'}
-  - arg: {name: selectframe_clip_model_name, default: 'PE-Core-L14-336'}
+  - arg: {name: selectframe_clip_backend, default: ''}
+  - arg: {name: selectframe_clip_model_name, default: ''}
   - arg: {name: cuda_device, default: ''}
 
   - arg: {name: enable_zmq, default: 'false'}
@@ -92,8 +92,6 @@ launch:
         - {name: sam_model, value: $(var sam_model)}
         - {name: sam_model_config_path, value: $(var sam_model_config_path)}
         - {name: sam_imgsz, value: $(var sam_imgsz)}
-        - {name: sentence_embedding_model, value: ""}
-        - {name: compute_full_image_description, value: 'true'}
 
         - {name: depth_lb, value: $(var depth_lb)}
         - {name: depth_ub, value: $(var depth_ub)}
@@ -108,9 +106,6 @@ launch:
         - {name: min_obs_per_track, value: $(var min_obs_per_track)}
         - {name: multi_image_min_n_masks, value: $(var multi_image_min_n_masks)}
         - {name: save_debug_data, value: 'false'}
-        - {name: save_grounding_images, value: 'false'}
-        - {name: save_plain_grounding_images, value: 'false'}
-        - {name: save_object_images, value: 'false'}
 
         - {name: selectframe_clip_backend, value: $(var selectframe_clip_backend)}
         - {name: selectframe_clip_model_name, value: $(var selectframe_clip_model_name)}
